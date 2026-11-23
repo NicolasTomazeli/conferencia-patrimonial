@@ -36,6 +36,7 @@ function montarBase(linhas) {
 
 function mostrarBaseInfo() {
   $('btnBaseCelular').disabled = !baseLinhas.length;
+  atualizarPublicacao();
   if (!baseLinhas.length) {
     $('baseInfo').innerHTML = '<span class="aviso">Nenhuma base carregada.</span>';
     return;
@@ -69,6 +70,122 @@ $('btnBaseCelular').addEventListener('click', () => {
   const partes = ['PATRIMONIO\tDESCRICAO\tCODFILIAL\n'];
   for (const [p, l] of basePorNumero) partes.push(p + '\t' + l.d.replace(/\t/g, ' ') + '\t' + l.f + '\n');
   baixarArquivo(new Blob(partes, { type: 'text/plain;charset=utf-8' }), 'base_ativos.txt');
+});
+
+// ---------- Publicação da base (criptografada) no repositório ----------
+const REPO = { dono: 'NicolasTomazeli', nome: 'conferencia-patrimonial', ramo: 'main' };
+let temSenha = false, tokenSalvo = '';
+
+async function atualizarPublicacao() {
+  const pub = await kvLer('publicacao');
+  $('pubInfo').textContent = pub ? 'Última publicação: ' + dataHora(pub.em) + ' · ' + pub.ativos.toLocaleString('pt-BR') + ' ativos.' :
+    'Nenhuma base publicada por este computador.';
+  $('senhaInfo').innerHTML = temSenha ? '<span class="bom">Senha definida neste computador.</span>' :
+    '<span class="aviso">Defina a senha da base antes de publicar.</span>';
+  $('tokenInfo').textContent = tokenSalvo ? 'Token salvo neste computador. Deixe o campo vazio para usá-lo.' : '';
+  $('btnEsquecer').hidden = !tokenSalvo;
+  $('btnPublicar').disabled = !(baseLinhas.length && temSenha);
+}
+
+$('btnEsquecer').addEventListener('click', async () => {
+  await operar('kv', 'readwrite', s => s.delete('token'));
+  tokenSalvo = '';
+  atualizarPublicacao();
+});
+
+async function definirSenha(senha) {
+  await kvGravar('chaveBase', await chaveDaSenha(senha));
+  temSenha = true;
+  atualizarPublicacao();
+}
+
+$('btnGerarSenha').addEventListener('click', async () => {
+  if (temSenha && !confirm('Gerar uma senha nova?\n\nDepois da próxima publicação, todos os celulares vão pedir a senha nova.')) return;
+  const senha = gerarSenha();
+  await definirSenha(senha);
+  $('senhaGerada').value = senha;
+  $('senhaNova').hidden = false;
+  $('senhaDigitar').hidden = true;
+});
+
+$('btnCopiarSenha').addEventListener('click', async () => {
+  try { await navigator.clipboard.writeText($('senhaGerada').value); $('btnCopiarSenha').textContent = 'Copiada'; }
+  catch (e) { $('senhaGerada').select(); }
+});
+
+$('btnUsarSenha').addEventListener('click', () => {
+  $('senhaDigitar').hidden = false;
+  $('senhaNova').hidden = true;
+  $('senhaGerada').value = '';
+});
+
+$('btnSalvarSenha').addEventListener('click', async () => {
+  const senha = normalizarSenha($('senhaExistente').value);
+  if (senha.length < SENHA_MINIMA) { alert('A senha precisa ter pelo menos ' + SENHA_MINIMA + ' caracteres, sem contar hífens e espaços.'); return; }
+  await definirSenha(senha);
+  $('senhaExistente').value = '';
+  $('senhaDigitar').hidden = true;
+});
+
+async function github(token, metodo, caminho, corpo) {
+  const r = await fetch('https://api.github.com/repos/' + REPO.dono + '/' + REPO.nome + caminho, {
+    method: metodo,
+    headers: {
+      'Authorization': 'Bearer ' + token,
+      'Accept': 'application/vnd.github+json',
+      'X-GitHub-Api-Version': '2022-11-28',
+      'Content-Type': 'application/json'
+    },
+    body: corpo ? JSON.stringify(corpo) : undefined,
+    cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer'
+  });
+  if (r.status === 401) throw new Error('token inválido ou vencido.');
+  if (r.status === 403 || r.status === 404) throw new Error('o token não tem permissão de escrita (Contents) neste repositório.');
+  if (!r.ok) throw new Error('GitHub respondeu ' + r.status + '.');
+  return r.json();
+}
+
+$('btnPublicar').addEventListener('click', async () => {
+  const msg = (t, c) => { $('pubMsg').textContent = t; $('pubMsg').className = 'info ' + (c || ''); };
+  const token = $('token').value.trim() || tokenSalvo;
+  if (!token) { msg('Informe o token do GitHub.', 'erro'); return; }
+  const chave = await kvLer('chaveBase');
+  if (!chave) { msg('Defina a senha da base.', 'erro'); return; }
+  $('btnPublicar').disabled = true;
+  try {
+    msg('Criptografando a base...');
+    const d = new Date();
+    const versao = d.getFullYear() + doisDigitos(d.getMonth() + 1) + doisDigitos(d.getDate()) + '-' +
+      doisDigitos(d.getHours()) + doisDigitos(d.getMinutes()) + doisDigitos(d.getSeconds());
+    const linhas = Array.from(basePorNumero, ([p, l]) => [p, l.d, l.f]);
+    const bytes = await cifrarBase(chave, { v: versao, l: linhas });
+    const meta = { formato: 1, versao, sha256: await sha256Hex(bytes), tamanho: bytes.length, ativos: linhas.length, publicadaEm: dataHora(d.getTime()) };
+
+    msg('Enviando para o GitHub...');
+    // um único commit com os dois arquivos, para o celular nunca ver metade da publicação
+    const ref = await github(token, 'GET', '/git/ref/heads/' + REPO.ramo);
+    const pai = ref.object.sha;
+    const commitPai = await github(token, 'GET', '/git/commits/' + pai);
+    const blobBin = await github(token, 'POST', '/git/blobs', { content: bytesParaBase64(bytes), encoding: 'base64' });
+    const blobJson = await github(token, 'POST', '/git/blobs', { content: JSON.stringify(meta, null, 2) + '\n', encoding: 'utf-8' });
+    const arvore = await github(token, 'POST', '/git/trees', {
+      base_tree: commitPai.tree.sha,
+      tree: [
+        { path: 'dados/base.bin', mode: '100644', type: 'blob', sha: blobBin.sha },
+        { path: 'dados/base.json', mode: '100644', type: 'blob', sha: blobJson.sha }
+      ]
+    });
+    const commit = await github(token, 'POST', '/git/commits', { message: 'Publica base de ativos ' + versao, tree: arvore.sha, parents: [pai] });
+    await github(token, 'PATCH', '/git/refs/heads/' + REPO.ramo, { sha: commit.sha });
+
+    if ($('lembrarToken').checked) { await kvGravar('token', token); tokenSalvo = token; }
+    $('token').value = '';
+    await kvGravar('publicacao', { versao, em: d.getTime(), ativos: linhas.length });
+    msg('Base publicada (' + linhas.length.toLocaleString('pt-BR') + ' ativos). Os celulares recebem em cerca de 2 minutos.', 'bom');
+  } catch (e) {
+    msg('Não foi possível publicar: ' + e.message, 'erro');
+  }
+  atualizarPublicacao();
 });
 
 // ---------- Importação ----------
@@ -320,6 +437,8 @@ $('btnExcluir').addEventListener('click', async () => {
   const salva = await kvLer('base');
   baseInfo = await kvLer('baseInfo');
   if (salva && baseInfo) montarBase(salva);
+  temSenha = !!(await kvLer('chaveBase'));
+  tokenSalvo = (await kvLer('token')) || '';
   mostrarBaseInfo();
   desenharConferencias();
 })();

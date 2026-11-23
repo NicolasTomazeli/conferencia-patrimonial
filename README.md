@@ -22,3 +22,13 @@ Este repositório contém **somente o código**. Nenhum dado de patrimônio é a
 4. No painel: **Importar conferências** e exportar o relatório.
 
 O código da conferência segue o formato `FFF-AAAAMMDD-NN` (filial, data, sequência no aparelho).
+
+## Atualização automática da base
+
+O painel publica a base em `dados/base.bin` (criptografada) e `dados/base.json` (versão e hash). O coletor consulta esses arquivos ao abrir e atualiza sozinho.
+
+- **Cifra:** AES-256-GCM, com sal e IV aleatórios a cada publicação e cabeçalho autenticado.
+- **Chave:** PBKDF2-HMAC-SHA-256 com 600.000 iterações, a partir de uma senha gerada com 100 bits de entropia.
+- **Conteúdo:** somente patrimônio, descrição e filial. Valores não são publicados.
+- **Senha e token** nunca são enviados ao repositório. A senha fica no navegador como chave não extraível; o token do GitHub só é guardado se a opção "Lembrar" for marcada.
+- As páginas usam Content-Security-Policy restrita: só carregam scripts do próprio site e só se conectam ao próprio site e a `api.github.com`.

@@ -1,7 +1,7 @@
 'use strict';
 // Funções compartilhadas entre o coletor (celular) e o painel (PC).
 
-const VERSAO_APP = '1.1.0';
+const VERSAO_APP = '1.2.0';
 const ABA_LEITURAS = 'Conferencia';
 const ABA_INFO = 'Info';
 const COLUNAS_LEITURA = [
@@ -232,4 +232,75 @@ function abaDeMatriz(matriz, larguras) {
   const ws = XLSX.utils.aoa_to_sheet(matriz);
   if (larguras) ws['!cols'] = larguras.map(w => ({ wch: w }));
   return ws;
+}
+
+// ---------- Criptografia da base publicada ----------
+// Formato do arquivo: "CPB1" (4) | iterações (4, big-endian) | sal (16) | IV (12) | dados cifrados + etiqueta GCM.
+// Chave: PBKDF2-HMAC-SHA-256 a partir da senha. Cifra: AES-256-GCM, com o cabeçalho autenticado (AAD).
+// Conteúdo: JSON compactado com gzip.
+const CRIPTO_MAGIC = [0x43, 0x50, 0x42, 0x31];
+const CRIPTO_ITERACOES = 600000;
+const CRIPTO_CABECALHO = 36;
+const SENHA_ALFABETO = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';   // 32 símbolos, sem 0/O/1/I
+const SENHA_MINIMA = 16;
+
+// Hífens, espaços e maiúsculas/minúsculas não fazem diferença na digitação.
+function normalizarSenha(s) { return String(s || '').replace(/[\s-]/g, '').toUpperCase(); }
+
+// 20 símbolos aleatórios = 100 bits de entropia.
+function gerarSenha() {
+  const bytes = crypto.getRandomValues(new Uint8Array(20));
+  const letras = Array.from(bytes, b => SENHA_ALFABETO[b & 31]).join('');
+  return letras.match(/.{5}/g).join('-');
+}
+
+// Guarda a senha como chave não extraível: o navegador consegue usá-la, mas não revelá-la.
+function chaveDaSenha(senha) {
+  return crypto.subtle.importKey('raw', new TextEncoder().encode(normalizarSenha(senha)), 'PBKDF2', false, ['deriveKey']);
+}
+
+function derivarChave(chaveBase, sal, iteracoes) {
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt: sal, iterations: iteracoes, hash: 'SHA-256' },
+    chaveBase, { name: 'AES-GCM', length: 256 }, false, ['encrypt', 'decrypt']);
+}
+
+async function transformar(bytes, fluxo) {
+  return new Uint8Array(await new Response(new Blob([bytes]).stream().pipeThrough(fluxo)).arrayBuffer());
+}
+
+async function cifrarBase(chaveBase, objeto) {
+  const claro = await transformar(new TextEncoder().encode(JSON.stringify(objeto)), new CompressionStream('gzip'));
+  const cab = new Uint8Array(CRIPTO_CABECALHO);
+  cab.set(CRIPTO_MAGIC, 0);
+  new DataView(cab.buffer).setUint32(4, CRIPTO_ITERACOES);
+  crypto.getRandomValues(cab.subarray(8, 36));          // sal (16) + IV (12), novos a cada publicação
+  const chave = await derivarChave(chaveBase, cab.slice(8, 24), CRIPTO_ITERACOES);
+  const cifrado = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv: cab.slice(24, 36), additionalData: cab }, chave, claro));
+  const saida = new Uint8Array(cab.length + cifrado.length);
+  saida.set(cab, 0); saida.set(cifrado, cab.length);
+  return saida;
+}
+
+// Lança erro se a senha estiver errada ou se o arquivo tiver sido alterado.
+async function decifrarBase(chaveBase, bytes) {
+  if (bytes.length < CRIPTO_CABECALHO + 16 || CRIPTO_MAGIC.some((b, i) => bytes[i] !== b)) throw new Error('formato desconhecido');
+  const cab = bytes.slice(0, CRIPTO_CABECALHO);
+  const iteracoes = new DataView(cab.buffer).getUint32(4);
+  if (iteracoes < CRIPTO_ITERACOES || iteracoes > 5000000) throw new Error('parâmetros inválidos');
+  const chave = await derivarChave(chaveBase, cab.slice(8, 24), iteracoes);
+  const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: cab.slice(24, 36), additionalData: cab }, chave, bytes.slice(CRIPTO_CABECALHO));
+  const texto = new TextDecoder().decode(await transformar(new Uint8Array(claro), new DecompressionStream('gzip')));
+  return JSON.parse(texto);
+}
+
+async function sha256Hex(bytes) {
+  const h = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes));
+  return Array.from(h, b => b.toString(16).padStart(2, '0')).join('');
+}
+
+function bytesParaBase64(bytes) {
+  let s = '';
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }

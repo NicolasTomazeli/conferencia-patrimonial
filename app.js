@@ -30,6 +30,7 @@ async function irMenu() {
   $('btnNova').disabled = !base.size;
   $('menuMsg').textContent = base.size ? '' : 'Carregue a base de ativos antes de iniciar uma conferência.';
   mostrar('telaMenu');
+  verificarBase(false);
 }
 
 // ---------- Base ----------
@@ -52,6 +53,11 @@ function mostrarBaseInfo() {
     ' · carregada em ' + dataHora(baseInfo.em) + '</span>';
 }
 
+function liberarMenu() {
+  $('btnNova').disabled = !base.size;
+  if (base.size) $('menuMsg').textContent = '';
+}
+
 $('arqBase').addEventListener('change', async ev => {
   const arq = ev.target.files[0];
   ev.target.value = '';
@@ -69,6 +75,100 @@ $('arqBase').addEventListener('change', async ev => {
   } catch (e) {
     $('baseInfo').innerHTML = '<span class="erro">Erro ao carregar: ' + escapar(e.message) + '</span>';
   }
+});
+
+// ---------- Atualização automática da base ----------
+let verificando = false, verificadoEm = 0, metaPendente = null;
+
+function syncMsg(texto, classe) {
+  $('syncMsg').textContent = texto || '';
+  $('syncMsg').className = 'info ' + (classe || '');
+}
+
+function pedirSenha(texto) {
+  $('senhaBox').hidden = false;
+  syncMsg(texto, 'aviso');
+}
+
+// Consulta a base publicada. Sem "forcar", no máximo uma vez a cada 5 minutos e sem mensagens de rotina.
+async function verificarBase(forcar) {
+  if (verificando) return;
+  if (!forcar && Date.now() - verificadoEm < 5 * 60000) return;
+  if (!navigator.onLine) { if (forcar) syncMsg('Sem internet no momento.', 'aviso'); return; }
+  verificando = true;
+  try {
+    const r = await fetch('dados/base.json?t=' + Date.now(), { cache: 'no-store' });
+    verificadoEm = Date.now();
+    if (r.status === 404) { if (forcar) syncMsg('Nenhuma base publicada ainda.'); return; }
+    if (!r.ok) throw new Error('erro ' + r.status);
+    const meta = await r.json();
+    if (!meta || typeof meta.versao !== 'string' || !/^[0-9a-f]{64}$/.test(meta.sha256 || '')) throw new Error('informações da base inválidas');
+    if (baseInfo && baseInfo.versao === meta.versao) {
+      $('senhaBox').hidden = true;
+      if (forcar) syncMsg('A base já está na versão mais recente.', 'bom');
+      return;
+    }
+    metaPendente = meta;
+    const chave = await kvLer('chaveBase');
+    if (!chave) { pedirSenha('Há uma base publicada. Digite a senha para baixar.'); return; }
+    await baixarBase(meta, chave);
+  } catch (e) {
+    if (forcar) syncMsg('Não foi possível verificar: ' + e.message, 'erro');
+  } finally {
+    verificando = false;
+  }
+}
+
+async function baixarBase(meta, chave) {
+  syncMsg('Baixando a base nova...');
+  const r = await fetch('dados/base.bin?v=' + encodeURIComponent(meta.versao), { cache: 'no-store' });
+  if (!r.ok) throw new Error('erro ' + r.status + ' ao baixar');
+  const bytes = new Uint8Array(await r.arrayBuffer());
+  if (await sha256Hex(bytes) !== meta.sha256) throw new Error('a publicação ainda está sendo processada, tente em 1 minuto');
+  let obj;
+  try {
+    obj = await decifrarBase(chave, bytes);
+  } catch (e) {
+    await operar('kv', 'readwrite', s => s.delete('chaveBase'));
+    pedirSenha('Senha incorreta ou alterada. Digite a senha atual.');
+    return false;
+  }
+  if (!obj || obj.v !== meta.versao || !Array.isArray(obj.l) || !obj.l.length) throw new Error('conteúdo da base inválido');
+  montarBase(obj.l);
+  baseInfo = { arquivo: 'Base publicada', em: Date.now(), total: base.size, versao: meta.versao };
+  await kvGravar('base', Array.from(base, ([p, v]) => [p, v[0], v[1]]));
+  await kvGravar('baseInfo', baseInfo);
+  metaPendente = null;
+  $('senhaBox').hidden = true;
+  $('senhaBase').value = '';
+  mostrarBaseInfo();
+  liberarMenu();
+  syncMsg('Base atualizada automaticamente: ' + base.size.toLocaleString('pt-BR') + ' ativos.', 'bom');
+  return true;
+}
+
+$('btnVerificar').addEventListener('click', () => { syncMsg('Verificando...'); verificarBase(true); });
+
+$('btnSenha').addEventListener('click', async () => {
+  const senha = normalizarSenha($('senhaBase').value);
+  if (senha.length < SENHA_MINIMA) { syncMsg('Senha incompleta.', 'erro'); return; }
+  if (!metaPendente || verificando) return;
+  verificando = true;
+  $('btnSenha').disabled = true;
+  try {
+    const chave = await chaveDaSenha(senha);
+    await kvGravar('chaveBase', chave);
+    await baixarBase(metaPendente, chave);
+  } catch (e) {
+    syncMsg('Não foi possível baixar: ' + e.message, 'erro');
+  } finally {
+    verificando = false;
+    $('btnSenha').disabled = false;
+  }
+});
+
+document.addEventListener('visibilitychange', () => {
+  if (!document.hidden && !$('telaMenu').hidden) verificarBase(false);
 });
 
 // ---------- Nova conferência ----------

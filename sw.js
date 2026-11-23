@@ -1,6 +1,6 @@
 // Service worker: permite abrir o app sem internet.
 // Estratégia: tenta a rede primeiro (para receber atualizações) e cai no cache se estiver offline.
-const CACHE = 'conferencia-v2';
+const CACHE = 'conferencia-v3';
 const ARQUIVOS = [
   './', './index.html', './app.js', './comum.js', './estilo.css',
   './painel.html', './painel.js',
@@ -22,6 +22,9 @@ self.addEventListener('activate', ev => {
 
 self.addEventListener('fetch', ev => {
   if (ev.request.method !== 'GET') return;
+  const url = new URL(ev.request.url);
+  // a base publicada e chamadas externas nunca passam pelo cache
+  if (url.origin !== self.location.origin || url.pathname.includes('/dados/')) return;
   ev.respondWith(
     fetch(ev.request)
       .then(resp => {

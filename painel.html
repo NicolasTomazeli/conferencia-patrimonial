@@ -2,6 +2,8 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Painel · Conferência Patrimonial</title>
 <link rel="icon" href="icons/icon-192.png">
@@ -20,8 +22,38 @@
           <label class="btn sec">Carregar base (Excel)
             <input type="file" id="arqBase" accept=".xlsx,.txt,.tsv,.csv">
           </label>
-          <button id="btnBaseCelular" class="sec" disabled>Gerar base para o celular</button>
+          <button id="btnBaseCelular" class="sec" disabled>Baixar base para envio manual</button>
         </div>
+      </div>
+
+      <div class="card">
+        <h2>Publicar base para os celulares</h2>
+        <div class="info" id="pubInfo" style="margin-top:0"></div>
+
+        <div class="info" id="senhaInfo"></div>
+        <div class="linha">
+          <button id="btnGerarSenha" class="sec">Gerar senha nova</button>
+          <button id="btnUsarSenha" class="sec">Usar senha existente</button>
+        </div>
+        <div id="senhaNova" hidden>
+          <div class="info aviso">Anote agora. Esta senha não será mostrada de novo.</div>
+          <input type="text" id="senhaGerada" readonly>
+          <div class="linha"><button id="btnCopiarSenha" class="sec">Copiar senha</button></div>
+        </div>
+        <div id="senhaDigitar" hidden>
+          <input type="text" id="senhaExistente" autocomplete="off" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX">
+          <div class="linha"><button id="btnSalvarSenha" class="sec">Salvar senha</button></div>
+        </div>
+
+        <label class="campo">Token do GitHub
+          <input type="password" id="token" autocomplete="off" placeholder="github_pat_...">
+        </label>
+        <label class="info" style="display:block"><input type="checkbox" id="lembrarToken"> Lembrar o token neste computador</label>
+        <div class="info" id="tokenInfo"></div>
+        <button id="btnEsquecer" class="sec" hidden>Esquecer token salvo</button>
+
+        <div class="linha"><button id="btnPublicar" disabled>Publicar base</button></div>
+        <div class="info" id="pubMsg"></div>
       </div>
 
       <div class="card">
