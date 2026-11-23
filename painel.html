@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel · Conferência Patrimonial</title>
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body class="painel">
+<header><h1>Painel · Conferência Patrimonial</h1><span class="cod" id="versao"></span></header>
+<main>
+  <div class="grade">
+    <!-- coluna esquerda -->
+    <div>
+      <div class="card" style="margin-top:0">
+        <h2>1. Base de ativos do sistema</h2>
+        <div id="baseInfo">Verificando...</div>
+        <div class="pilha" style="margin-top:10px">
+          <label class="btn sec">Carregar base (Excel)
+            <input type="file" id="arqBase" accept=".xlsx,.txt,.tsv,.csv">
+          </label>
+          <button id="btnBaseCelular" class="sec" disabled>Gerar base para o celular</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>2. Arquivos dos coletores</h2>
+        <label class="btn">Importar conferências
+          <input type="file" id="arqConf" accept=".xlsx" multiple>
+        </label>
+        <div class="info" id="importMsg"></div>
+      </div>
+
+      <div class="card">
+        <h2>3. Conferências</h2>
+        <div class="info" id="confVazia">Nenhuma conferência importada.</div>
+        <ul class="lista confs" id="listaConfs"></ul>
+      </div>
+    </div>
+
+    <!-- coluna direita -->
+    <div>
+      <div class="card" style="margin-top:0" id="semSelecao">
+        Carregue a base, importe os arquivos enviados pelos celulares e selecione uma conferência.
+      </div>
+
+      <div id="detalhe" hidden>
+        <div class="card" style="margin-top:0">
+          <h2 id="detTitulo"></h2>
+          <div class="info" id="detInfo" style="margin-top:0"></div>
+          <div class="info aviso" id="detAviso" hidden></div>
+          <div class="resumo" id="resumo" style="margin-top:10px"></div>
+          <div class="linha">
+            <button id="btnRelatorio">Exportar relatório (Excel)</button>
+            <button id="btnStatus" class="sec">Marcar como finalizada</button>
+            <button id="btnExcluir" class="perigo" style="flex:0 0 110px">Excluir</button>
+          </div>
+        </div>
+
+        <div class="abas" id="abas"></div>
+        <input type="search" id="busca" placeholder="Filtrar por número ou descrição">
+        <div class="info" id="tabInfo"></div>
+        <div class="tabela"><table id="tabela"></table></div>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script src="lib/xlsx.full.min.js"></script>
+<script src="comum.js"></script>
+<script src="painel.js"></script>
+</body>
+</html>
