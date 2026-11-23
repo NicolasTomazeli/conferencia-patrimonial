@@ -115,6 +115,55 @@ $('btnCriar').addEventListener('click', async () => {
   abrirLeitura(nova.codigo);
 });
 
+// ---------- Importar conferência (continuar a partir de um Excel parcial) ----------
+$('arqConf').addEventListener('change', async ev => {
+  const arq = ev.target.files[0];
+  ev.target.value = '';
+  if (!arq) return;
+  const aviso = (texto, classe) => { $('menuMsg').innerHTML = '<span class="' + classe + '">' + escapar(texto) + '</span>'; };
+  try {
+    const { info, porCodigo } = await lerArquivoConferencia(arq);
+    if (porCodigo.size > 1) throw new Error('o arquivo tem mais de uma conferência.');
+    const [codigo, itens] = porCodigo.entries().next().value;
+    if (/^FINALIZADA/.test(semAcento(info.STATUS))) {
+      throw new Error('a conferência ' + codigo + ' já foi finalizada e não pode receber novas leituras.');
+    }
+    let c = await confLer(codigo);
+    if (c && c.status === 'finalizada') {
+      throw new Error('a conferência ' + codigo + ' já está finalizada neste aparelho.');
+    }
+    if (!c) {
+      const filial = (itens[0] && itens[0].filialAtual) || normalizarFilial(info.FILIAL) || normalizarFilial(codigo.split('-')[0]);
+      if (!filial) throw new Error('não foi possível identificar a filial da conferência.');
+      const maisRecente = itens.reduce((a, l) => (!a || l.ultima > a.ultima ? l : a), null);
+      c = {
+        codigo, filial,
+        usuario: (await kvLer('usuario')) || String(info.USUARIO || '').trim() || 'Não informado',
+        dispositivo,
+        setorAtual: maisRecente ? maisRecente.setor : '',
+        status: 'aberta',
+        criadaEm: lerDataHora(info.INICIO) || Date.now(), finalizadaEm: 0,
+        baseArquivo: baseInfo ? baseInfo.arquivo : ''
+      };
+      await confGravar(c);
+    }
+    let novos = 0;
+    for (const l of itens) {
+      // a base deste aparelho é a referência para descrição e filial
+      const b = base.get(l.patrimonio);
+      if (base.size) { l.cadastrado = !!b; l.descricao = b ? b[0] : ''; l.filialBase = b ? b[1] : ''; }
+      l.filialAtual = c.filial;
+      const antiga = await leituraLer(codigo, l.patrimonio);
+      if (antiga) juntarLeituras(l, antiga); else novos++;
+      await leituraGravar(l);
+    }
+    await abrirLeitura(codigo);
+    $('camMsg').innerHTML = '<span class="bom">Conferência importada: ' + itens.length + ' leituras no arquivo, ' + novos + ' novas neste aparelho.</span>';
+  } catch (e) {
+    aviso('Não foi possível importar: ' + e.message, 'erro');
+  }
+});
+
 // ---------- Listas ----------
 async function abrirLista(status) {
   const todas = (await confListar()).filter(c => c.status === status).sort((a, b) => b.criadaEm - a.criadaEm);

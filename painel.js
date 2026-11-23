@@ -89,41 +89,7 @@ $('arqConf').addEventListener('change', async ev => {
 });
 
 async function importar(arq) {
-  const wb = XLSX.read(await arq.arrayBuffer(), { type: 'array' });
-  const ws = wb.Sheets[ABA_LEITURAS];
-  if (!ws) throw new Error('não é um arquivo do coletor (falta a aba "' + ABA_LEITURAS + '").');
-  const m = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '', blankrows: false });
-  const cab = (m[0] || []).map(semAcento);
-  const idx = COLUNAS_LEITURA.map(c => cab.indexOf(semAcento(c)));
-  if (idx[0] < 0 || idx[1] < 0) throw new Error('colunas de código da conferência ou patrimônio não encontradas.');
-
-  const info = {};
-  if (wb.Sheets[ABA_INFO]) {
-    for (const r of XLSX.utils.sheet_to_json(wb.Sheets[ABA_INFO], { header: 1, defval: '' })) info[semAcento(r[0])] = r[1];
-  }
-  const pega = (r, i) => idx[i] >= 0 ? r[idx[i]] : '';
-
-  const porCodigo = new Map();
-  for (let i = 1; i < m.length; i++) {
-    const r = m[i];
-    const codigo = String(pega(r, 0)).trim();
-    const p = normalizarPatrimonio(pega(r, 1));
-    if (!codigo || !p) continue;
-    if (!porCodigo.has(codigo)) porCodigo.set(codigo, []);
-    const filialBase = normalizarFilial(pega(r, 3));
-    porCodigo.get(codigo).push({
-      codigo, patrimonio: p,
-      descricao: String(pega(r, 2)), filialBase, filialAtual: normalizarFilial(pega(r, 4)),
-      cadastrado: filialBase !== '',
-      setor: String(pega(r, 5)), usuario: String(pega(r, 6)),
-      primeira: lerDataHora(pega(r, 7)), ultima: lerDataHora(pega(r, 8)),
-      qtd: Number(pega(r, 9)) || 1, origem: String(pega(r, 10))
-    });
-  }
-  // arquivo sem leituras, mas com o código na aba Info
-  const codInfo = String(info[semAcento('Código da Conferência')] || '').trim();
-  if (!porCodigo.size && codInfo) porCodigo.set(codInfo, []);
-  if (!porCodigo.size) throw new Error('nenhuma leitura encontrada no arquivo.');
+  const { info, porCodigo } = await lerArquivoConferencia(arq);
 
   const partes = [];
   for (const [codigo, itens] of porCodigo) {
@@ -148,11 +114,7 @@ async function importar(arq) {
       const antiga = await leituraLer(codigo, l.patrimonio);
       if (antiga) {
         // mesma plaqueta vinda de outro aparelho ou de um envio anterior: junta as datas
-        const maisNova = l.ultima >= antiga.ultima ? l : antiga;
-        l.primeira = Math.min(l.primeira || antiga.primeira, antiga.primeira || l.primeira);
-        l.ultima = Math.max(l.ultima, antiga.ultima);
-        l.qtd = Math.max(l.qtd, antiga.qtd);
-        l.setor = maisNova.setor; l.usuario = maisNova.usuario; l.origem = maisNova.origem;
+        juntarLeituras(l, antiga);
       } else novos++;
       await leituraGravar(l);
     }
