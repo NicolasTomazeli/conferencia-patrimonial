@@ -1,0 +1,193 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Teste de Leitura - Conferência Patrimonial</title>
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: #10141a; color: #eef2f6; }
+  header { padding: 12px 16px; font-weight: 600; background: #1b2330; }
+  main { padding: 12px; max-width: 640px; margin: 0 auto; }
+  .cam { position: relative; background: #000; border-radius: 12px; overflow: hidden; aspect-ratio: 4/3; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .mira { position: absolute; left: 8%; right: 8%; top: 38%; height: 24%; border: 3px solid #fff8; border-radius: 10px; pointer-events: none; }
+  .mira.ok { border-color: #37d67a; }
+  .row { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+  button, label.btn { flex: 1; min-height: 48px; padding: 10px; border: 0; border-radius: 10px; background: #2d6cdf; color: #fff; font-size: 16px; font-weight: 600; text-align: center; cursor: pointer; }
+  button.sec, label.btn { background: #2a3445; }
+  button:disabled { opacity: .4; }
+  input[type=file] { display: none; }
+  input[type=range] { width: 100%; }
+  .card { margin-top: 10px; padding: 14px; border-radius: 12px; background: #1b2330; }
+  .num { font-size: 34px; font-weight: 700; letter-spacing: 1px; }
+  .desc { margin-top: 4px; font-size: 16px; }
+  .fil { margin-top: 4px; color: #9fb0c4; }
+  .aviso { color: #ffc857; }
+  .erro { color: #ff6b6b; }
+  .info { color: #9fb0c4; font-size: 14px; margin-top: 8px; }
+  ol { margin: 8px 0 0; padding-left: 22px; }
+  li { padding: 4px 0; border-bottom: 1px solid #2a3445; font-size: 15px; }
+</style>
+</head>
+<body>
+<header>Teste de Leitura · Conferência Patrimonial</header>
+<main>
+  <div class="cam">
+    <video id="video" playsinline muted></video>
+    <div class="mira" id="mira"></div>
+  </div>
+
+  <div class="row">
+    <button id="btnIniciar">Iniciar câmera</button>
+    <button id="btnLanterna" class="sec" disabled>Lanterna</button>
+  </div>
+  <div class="row" id="zoomRow" hidden>
+    <input type="range" id="zoom" aria-label="Zoom">
+  </div>
+  <div class="row">
+    <label class="btn">Carregar base (base_ativos.txt)
+      <input type="file" id="arqBase" accept=".txt,.tsv,text/plain">
+    </label>
+  </div>
+  <div class="info" id="status">Toque em "Iniciar câmera" e aponte para a plaqueta.</div>
+
+  <div class="card">
+    <div class="num" id="num">—</div>
+    <div class="desc" id="desc"></div>
+    <div class="fil" id="fil"></div>
+  </div>
+
+  <div class="card">
+    <strong>Lidos: <span id="qtd">0</span></strong>
+    <ol id="lista" reversed></ol>
+  </div>
+</main>
+
+<script>
+const $ = id => document.getElementById(id);
+const base = new Map();          // patrimonio -> {d: descricao, f: filial}
+const lidos = new Map();         // patrimonio -> quantidade de leituras
+let track = null, detector = null, lanterna = false;
+let candidato = null, repeticoes = 0, ultimo = null, ultimoEm = 0;
+let audio = null;
+
+function status(msg, classe) {
+  $('status').textContent = msg;
+  $('status').className = 'info ' + (classe || '');
+}
+
+function bipe() {
+  try {
+    const o = audio.createOscillator(), g = audio.createGain();
+    o.frequency.value = 1200; g.gain.value = 0.2;
+    o.connect(g); g.connect(audio.destination);
+    o.start(); o.stop(audio.currentTime + 0.12);
+  } catch (e) {}
+  if (navigator.vibrate) navigator.vibrate(80);
+}
+
+$('arqBase').addEventListener('change', async ev => {
+  const arq = ev.target.files[0];
+  if (!arq) return;
+  status('Carregando base...');
+  const linhas = (await arq.text()).split('\n');
+  base.clear();
+  for (let i = 1; i < linhas.length; i++) {
+    const c = linhas[i].replace('\r', '').split('\t');
+    if (c.length >= 3 && c[0]) base.set(c[0].trim(), { d: c[1], f: c[2].trim() });
+  }
+  status('Base carregada: ' + base.size.toLocaleString('pt-BR') + ' ativos.');
+});
+
+$('btnIniciar').addEventListener('click', async () => {
+  audio = audio || new (window.AudioContext || window.webkitAudioContext)();
+  if (!('BarcodeDetector' in window)) {
+    status('Este navegador não tem leitor nativo. Abra no Chrome ou no Samsung Internet do celular.', 'erro');
+    return;
+  }
+  try {
+    detector = new BarcodeDetector({ formats: ['code_128'] });
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: false,
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
+    });
+    $('video').srcObject = stream;
+    await $('video').play();
+    track = stream.getVideoTracks()[0];
+    const caps = track.getCapabilities ? track.getCapabilities() : {};
+    if (caps.focusMode && caps.focusMode.includes('continuous')) {
+      track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
+    }
+    $('btnLanterna').disabled = !caps.torch;
+    if (caps.zoom) {
+      const z = $('zoom');
+      z.min = caps.zoom.min; z.max = Math.min(caps.zoom.max, 5); z.step = caps.zoom.step || 0.1;
+      z.value = track.getSettings().zoom || caps.zoom.min;
+      $('zoomRow').hidden = false;
+    }
+    $('btnIniciar').disabled = true;
+    status('Câmera ligada. Aponte para o código de barras.');
+    ler();
+  } catch (e) {
+    status('Não foi possível abrir a câmera: ' + e.message, 'erro');
+  }
+});
+
+$('btnLanterna').addEventListener('click', () => {
+  lanterna = !lanterna;
+  track.applyConstraints({ advanced: [{ torch: lanterna }] }).catch(() => {});
+});
+
+$('zoom').addEventListener('input', ev => {
+  track.applyConstraints({ advanced: [{ zoom: Number(ev.target.value) }] }).catch(() => {});
+});
+
+async function ler() {
+  if (!track || track.readyState !== 'live') return;
+  try {
+    const achados = await detector.detect($('video'));
+    const valor = achados.length ? achados[0].rawValue.trim() : null;
+    if (valor && /^\d{1,8}$/.test(valor)) {
+      // exige o mesmo valor em 2 quadros seguidos, para evitar leitura errada
+      if (valor === candidato) repeticoes++; else { candidato = valor; repeticoes = 1; }
+      if (repeticoes >= 2) confirmar(valor);
+    } else {
+      candidato = null; repeticoes = 0;
+    }
+  } catch (e) {}
+  setTimeout(ler, 80);
+}
+
+function confirmar(valor) {
+  const agora = Date.now();
+  if (valor === ultimo && agora - ultimoEm < 2500) { ultimoEm = agora; return; }
+  ultimo = valor; ultimoEm = agora;
+  bipe();
+  $('mira').classList.add('ok');
+  setTimeout(() => $('mira').classList.remove('ok'), 400);
+
+  const chave = String(Number(valor));
+  const item = base.get(chave);
+  $('num').textContent = chave;
+  if (item) {
+    $('desc').textContent = item.d; $('desc').className = 'desc';
+    $('fil').textContent = 'Filial base: ' + item.f;
+  } else {
+    $('desc').textContent = base.size ? 'Não cadastrado na base' : 'Base não carregada';
+    $('desc').className = 'desc aviso';
+    $('fil').textContent = '';
+  }
+
+  const vezes = (lidos.get(chave) || 0) + 1;
+  lidos.set(chave, vezes);
+  $('qtd').textContent = lidos.size;
+  if (vezes === 1) {
+    const li = document.createElement('li');
+    li.textContent = chave + (item ? ' · ' + item.d + ' · filial ' + item.f : '');
+    $('lista').prepend(li);
+  }
+}
+</script>
+</body>
+</html>
