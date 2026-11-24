@@ -5,7 +5,7 @@
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
-<meta name="theme-color" content="#1b2330">
+<meta name="theme-color" content="#17212b">
 <title>Conferência Patrimonial</title>
 <link rel="manifest" href="manifest.json">
 <link rel="icon" href="icons/icon-192.png">
@@ -14,116 +14,150 @@
 </head>
 <body>
 
-<!-- ===== MENU ===== -->
+<!-- ===== INÍCIO ===== -->
 <section id="telaMenu">
-  <header><h1>Conferência Patrimonial</h1></header>
+  <header class="topo"><h1>Conferência Patrimonial</h1></header>
   <main>
-    <div class="card">
-      <h2>Base de ativos</h2>
-      <div id="baseInfo">Verificando...</div>
-      <div class="info" id="syncMsg"></div>
-      <div id="senhaBox" hidden>
-        <label class="campo">Senha da base (fornecida pelo Patrimônio)
-          <input type="text" id="senhaBase" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX">
-        </label>
-        <div class="linha"><button id="btnSenha">Baixar base</button></div>
-      </div>
-      <div class="linha">
-        <button id="btnVerificar" class="sec">Verificar atualização</button>
-        <label class="btn sec">Carregar de arquivo
+    <!-- instalar o app -->
+    <div class="bloco" id="instalar" hidden>
+      <h2>Instale o app neste celular</h2>
+      <p class="info" id="instalarTexto">Ele ganha um ícone na tela inicial e funciona sem internet.</p>
+      <div class="linha" id="instalarLinha"><button id="btnInstalar">Instalar app</button></div>
+    </div>
+
+    <button id="btnNova" class="grande" style="margin-top:14px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg>
+      Nova conferência
+    </button>
+    <div class="nota aviso" id="menuMsg"></div>
+
+    <div id="secAbertas" hidden>
+      <h2 class="secao">Em andamento</h2>
+      <ul class="lista cartoes" id="abertas"></ul>
+    </div>
+
+    <!-- base de ativos -->
+    <details class="recolhe" id="baseDetalhes">
+      <summary>
+        <span class="ponto" id="basePonto"></span>
+        <span>Base de ativos<span class="apoio" id="baseResumo">Verificando...</span></span>
+      </summary>
+      <div class="dentro">
+        <div class="info" id="baseInfo" style="margin-top:0"></div>
+        <div class="nota" id="syncMsg"></div>
+        <div id="senhaBox" hidden>
+          <label class="campo">Senha da base
+            <small>Quem passa essa senha é o setor de Patrimônio.</small>
+            <input type="text" id="senhaBase" autocomplete="off" autocapitalize="characters" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX">
+          </label>
+          <div class="linha"><button id="btnSenha">Baixar base</button></div>
+        </div>
+        <div class="linha"><button id="btnVerificar" class="sec">Verificar atualização</button></div>
+        <label class="btn texto">Carregar a base de um arquivo
           <input type="file" id="arqBase" accept=".txt,.tsv,.csv,.xlsx,text/plain,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
         </label>
       </div>
-    </div>
+    </details>
+
     <div class="pilha" style="margin-top:14px">
-      <button id="btnNova">Nova conferência</button>
-      <button id="btnContinuar" class="sec">Continuar conferência</button>
-      <button id="btnFinalizadas" class="sec">Conferências finalizadas</button>
-      <label class="btn sec">Importar conferência (continuar de outro aparelho)
+      <button id="btnFinalizadas" class="sec" hidden>Conferências finalizadas</button>
+      <label class="btn texto">Continuar uma conferência de outro celular
         <input type="file" id="arqConf" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet">
       </label>
     </div>
-    <div class="info" id="menuMsg"></div>
+
     <div class="rodape" id="rodape"></div>
   </main>
 </section>
 
 <!-- ===== NOVA CONFERÊNCIA ===== -->
 <section id="telaNova" hidden>
-  <header><button class="mini sec" data-voltar>Voltar</button><h1>Nova conferência</h1></header>
+  <header class="topo"><button data-voltar>Voltar</button><h1>Nova conferência</h1></header>
   <main>
-    <label class="campo">Número da filial onde você está
+    <label class="campo">Em qual filial você está?
+      <small>Digite o número da filial.</small>
       <input type="number" id="novaFilial" inputmode="numeric" min="1" max="9999" placeholder="Ex.: 90">
     </label>
     <div class="info" id="novaFilialInfo"></div>
     <label class="campo">Seu nome
       <input type="text" id="novaUsuario" autocomplete="name" placeholder="Quem está conferindo">
     </label>
-    <label class="campo">Setor inicial (opcional)
+    <label class="campo">Por qual setor vai começar?
+      <small>Opcional. Você pode trocar durante a leitura.</small>
       <input type="text" id="novaSetor" placeholder="Ex.: Recepção">
     </label>
-    <div class="info erro" id="novaErro"></div>
-    <div class="linha"><button id="btnCriar">Iniciar conferência</button></div>
+    <div class="nota erro" id="novaErro"></div>
+    <div class="linha" style="margin-top:20px"><button id="btnCriar" class="grande">Começar a ler</button></div>
   </main>
 </section>
 
-<!-- ===== LISTA (continuar / finalizadas) ===== -->
+<!-- ===== FINALIZADAS ===== -->
 <section id="telaLista" hidden>
-  <header><button class="mini sec" data-voltar>Voltar</button><h1 id="listaTitulo">Conferências</h1></header>
+  <header class="topo"><button data-voltar>Voltar</button><h1 id="listaTitulo">Conferências</h1></header>
   <main>
-    <div class="info" id="listaVazia" hidden>Nenhuma conferência aqui.</div>
-    <ul class="lista" id="listaConfs"></ul>
+    <p class="info" id="listaVazia" hidden>Nenhuma conferência aqui.</p>
+    <p class="info" id="listaDica">Toque em "Enviar" para mandar o Excel de novo.</p>
+    <ul class="lista cartoes" id="listaConfs"></ul>
   </main>
 </section>
 
 <!-- ===== LEITURA ===== -->
 <section id="telaLeitura" hidden>
-  <header>
-    <button class="mini sec" id="btnPausar">Menu</button>
-    <h1>Filial <span id="leFilial"></span><br><span class="cod" id="leCodigo"></span></h1>
-    <button class="mini sec" id="btnLanterna" hidden>Lanterna</button>
+  <header class="topo">
+    <button id="btnPausar">Sair</button>
+    <h1>Filial <span id="leFilial"></span><span class="sub" id="leCodigo"></span></h1>
   </header>
-  <main>
-    <label class="campo" style="margin-top:0">Setor atual (vale para as próximas leituras)
-      <input type="text" id="leSetor" placeholder="Ex.: Recepção">
-    </label>
-
+  <main class="com-rodape">
     <div class="cam">
       <video id="video" playsinline muted></video>
       <div class="mira" id="mira"></div>
-      <div class="ligar" id="ligarCam"><button id="btnCamera">Ligar câmera</button></div>
+      <div class="ligar" id="ligarCam">
+        <button id="btnCamera">Ligar câmera</button>
+        <span>Aponte para o código de barras da plaqueta.</span>
+      </div>
+      <button class="lanterna" id="btnLanterna" hidden>Lanterna</button>
     </div>
-    <div class="info" id="camMsg"></div>
+    <div class="nota" id="camMsg"></div>
 
-    <div class="card ultimo" id="ultimo">
+    <div class="plaqueta" id="ultimo" aria-live="polite">
+      <div class="rotulo">Última plaqueta lida</div>
       <div class="num" id="ultNum">—</div>
-      <div class="desc" id="ultDesc">Aponte a câmera para a plaqueta.</div>
+      <div class="desc" id="ultDesc">Nenhuma leitura ainda.</div>
       <div class="sit" id="ultSit"></div>
     </div>
 
-    <div class="linha">
-      <input type="number" id="manual" inputmode="numeric" placeholder="Digitar número" style="margin-top:0">
+    <div class="progresso">
+      <div class="topo-prog"><b id="cFilial">0</b><span id="cFilialRot">da filial</span></div>
+      <div class="trilho"><div class="barra" id="barra"></div></div>
+      <div class="contagens">
+        <span><b id="cTotal">0</b> lidos no total</span>
+        <span class="c-transf"><b id="cTransf">0</b> de outra filial</span>
+        <span class="c-nao"><b id="cNao">0</b> não cadastrados</span>
+      </div>
+    </div>
+
+    <label class="campo">Setor atual
+      <small>Vale para as próximas leituras, até você trocar.</small>
+      <input type="text" id="leSetor" placeholder="Ex.: Recepção">
+    </label>
+
+    <label class="campo" for="manual">Plaqueta que a câmera não lê?
+      <small>Digite o número impresso nela.</small>
+    </label>
+    <div class="linha" style="margin-top:6px">
+      <input type="number" id="manual" inputmode="numeric" placeholder="Número do patrimônio" style="margin-top:0">
       <button id="btnManual" class="sec" style="flex:0 0 120px">Adicionar</button>
     </div>
 
-    <div class="contadores">
-      <div><b id="cTotal">0</b><span>lidos</span></div>
-      <div><b id="cFilial">0</b><span id="cFilialRot">da filial</span></div>
-      <div><b id="cTransf">0</b><span>outra filial</span></div>
-      <div><b id="cNao">0</b><span>não cadastr.</span></div>
-    </div>
-
-    <div class="linha">
-      <button id="btnParcial" class="sec">Enviar parcial</button>
-      <button id="btnFinalizar" class="ok">Finalizar</button>
-    </div>
-
-    <div class="card">
-      <h2>Itens lidos (toque para remover)</h2>
-      <ul class="lista" id="listaLidos"></ul>
-      <div class="info" id="listaMais" hidden></div>
-    </div>
+    <h2 class="secao">Itens lidos</h2>
+    <p class="info" id="listaNada" style="margin-top:0">Os itens aparecem aqui conforme você lê. Toque em um item para remover.</p>
+    <ul class="lista" id="listaLidos"></ul>
+    <p class="info" id="listaMais" hidden></p>
   </main>
+  <div class="acoes-fixas">
+    <button id="btnParcial" class="sec menor">Enviar parcial</button>
+    <button id="btnFinalizar" class="ok">Finalizar conferência</button>
+  </div>
 </section>
 
 <script src="lib/xlsx.full.min.js"></script>

@@ -10,90 +10,106 @@
 <link rel="stylesheet" href="estilo.css">
 </head>
 <body class="painel">
-<header><h1>Painel · Conferência Patrimonial</h1><span class="cod" id="versao"></span></header>
+<header class="topo">
+  <h1>Conferência Patrimonial<span class="sub">Painel de apuração</span></h1>
+  <span class="estado-base" id="versao"></span>
+</header>
 <main>
   <div class="grade">
-    <!-- coluna esquerda -->
-    <div>
-      <div class="card" style="margin-top:0">
-        <h2>1. Base de ativos do sistema</h2>
-        <div id="baseInfo">Verificando...</div>
-        <div class="pilha" style="margin-top:10px">
-          <label class="btn sec">Carregar base (Excel)
-            <input type="file" id="arqBase" accept=".xlsx,.txt,.tsv,.csv">
-          </label>
-          <button id="btnBaseCelular" class="sec" disabled>Baixar base para envio manual</button>
-        </div>
-      </div>
 
-      <div class="card">
-        <h2>Publicar base para os celulares</h2>
-        <div class="info" id="pubInfo" style="margin-top:0"></div>
-
-        <div class="info" id="senhaInfo"></div>
-        <div class="linha">
-          <button id="btnGerarSenha" class="sec">Gerar senha nova</button>
-          <button id="btnUsarSenha" class="sec">Usar senha existente</button>
-        </div>
-        <div id="senhaNova" hidden>
-          <div class="info aviso">Anote agora. Esta senha não será mostrada de novo.</div>
-          <input type="text" id="senhaGerada" readonly>
-          <div class="linha"><button id="btnCopiarSenha" class="sec">Copiar senha</button></div>
-        </div>
-        <div id="senhaDigitar" hidden>
-          <input type="text" id="senhaExistente" autocomplete="off" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX">
-          <div class="linha"><button id="btnSalvarSenha" class="sec">Salvar senha</button></div>
-        </div>
-
-        <label class="campo">Token do GitHub
-          <input type="password" id="token" autocomplete="off" placeholder="github_pat_...">
-        </label>
-        <label class="info" style="display:block"><input type="checkbox" id="lembrarToken"> Lembrar o token neste computador</label>
-        <div class="info" id="tokenInfo"></div>
-        <button id="btnEsquecer" class="sec" hidden>Esquecer token salvo</button>
-
-        <div class="linha"><button id="btnPublicar" disabled>Publicar base</button></div>
-        <div class="info" id="pubMsg"></div>
-      </div>
-
-      <div class="card">
-        <h2>2. Arquivos dos coletores</h2>
-        <label class="btn">Importar conferências
+    <!-- ===== lateral ===== -->
+    <aside class="lateral">
+      <div class="bloco">
+        <h2>Conferências</h2>
+        <label class="btn" style="margin-top:12px">Importar arquivos dos celulares
           <input type="file" id="arqConf" accept=".xlsx" multiple>
         </label>
         <div class="info" id="importMsg"></div>
+        <p class="info" id="confVazia">Nenhuma conferência importada ainda.</p>
+        <ul class="lista confs" id="listaConfs" style="margin-top:8px"></ul>
       </div>
 
-      <div class="card">
-        <h2>3. Conferências</h2>
-        <div class="info" id="confVazia">Nenhuma conferência importada.</div>
-        <ul class="lista confs" id="listaConfs"></ul>
-      </div>
-    </div>
+      <details class="recolhe" id="baseDetalhes">
+        <summary>
+          <span class="ponto" id="basePonto"></span>
+          <span>Base de ativos<span class="apoio" id="baseResumo">Verificando...</span></span>
+        </summary>
+        <div class="dentro">
+          <div class="info" id="baseInfo" style="margin-top:0"></div>
+          <label class="btn sec" style="margin-top:12px">Carregar Excel do sistema
+            <input type="file" id="arqBase" accept=".xlsx,.txt,.tsv,.csv">
+          </label>
+          <button id="btnBaseCelular" class="texto" disabled>Baixar base para envio manual</button>
+        </div>
+      </details>
 
-    <!-- coluna direita -->
-    <div>
-      <div class="card" style="margin-top:0" id="semSelecao">
-        Carregue a base, importe os arquivos enviados pelos celulares e selecione uma conferência.
+      <details class="recolhe" id="pubDetalhes">
+        <summary>
+          <span class="ponto" id="pubPonto"></span>
+          <span>Enviar base aos celulares<span class="apoio" id="pubInfo"></span></span>
+        </summary>
+        <div class="dentro">
+          <div class="info" id="senhaInfo" style="margin-top:0"></div>
+          <div class="linha">
+            <button id="btnGerarSenha" class="sec">Gerar senha nova</button>
+            <button id="btnUsarSenha" class="sec">Usar senha existente</button>
+          </div>
+          <div id="senhaNova" hidden>
+            <div class="nota aviso">Anote agora. Esta senha não será mostrada de novo.</div>
+            <input type="text" id="senhaGerada" class="senha-gerada" readonly>
+            <div class="linha"><button id="btnCopiarSenha" class="sec">Copiar senha</button></div>
+          </div>
+          <div id="senhaDigitar" hidden>
+            <input type="text" id="senhaExistente" autocomplete="off" spellcheck="false" placeholder="XXXXX-XXXXX-XXXXX-XXXXX">
+            <div class="linha"><button id="btnSalvarSenha" class="sec">Salvar senha</button></div>
+          </div>
+
+          <label class="campo">Token do GitHub
+            <input type="password" id="token" autocomplete="off" placeholder="github_pat_...">
+          </label>
+          <label class="info" style="display:block"><input type="checkbox" id="lembrarToken"> Lembrar o token neste computador</label>
+          <div class="info" id="tokenInfo"></div>
+          <button id="btnEsquecer" class="texto" hidden>Esquecer token salvo</button>
+
+          <div class="linha"><button id="btnPublicar" disabled>Publicar base</button></div>
+          <div class="nota" id="pubMsg"></div>
+        </div>
+      </details>
+    </aside>
+
+    <!-- ===== conteúdo ===== -->
+    <div class="conteudo">
+      <div class="vazio" id="semSelecao">
+        <h2>Nenhuma conferência aberta</h2>
+        <ol>
+          <li>Em <b>Base de ativos</b>, carregue o Excel do sistema. Ele fica guardado neste computador.</li>
+          <li>Em <b>Enviar base aos celulares</b>, publique a base para os coletores receberem a atualização.</li>
+          <li>Clique em <b>Importar arquivos dos celulares</b> e escolha os Excel que as filiais enviaram.</li>
+          <li>Selecione a conferência na lista para ver o que foi localizado, o que falta e o que precisa ser transferido.</li>
+        </ol>
       </div>
 
       <div id="detalhe" hidden>
-        <div class="card" style="margin-top:0">
-          <h2 id="detTitulo"></h2>
-          <div class="info" id="detInfo" style="margin-top:0"></div>
-          <div class="info aviso" id="detAviso" hidden></div>
-          <div class="resumo" id="resumo" style="margin-top:10px"></div>
-          <div class="linha">
-            <button id="btnRelatorio">Exportar relatório (Excel)</button>
+        <div class="cabecalho">
+          <div class="titulo">
+            <h2 id="detTitulo"></h2>
+            <div class="info" id="detInfo"></div>
+          </div>
+          <div class="acoes">
+            <button id="btnRelatorio">Exportar relatório em Excel</button>
             <button id="btnStatus" class="sec">Marcar como finalizada</button>
-            <button id="btnExcluir" class="perigo" style="flex:0 0 110px">Excluir</button>
+            <button id="btnExcluir" class="perigo">Excluir</button>
           </div>
         </div>
+        <div class="nota aviso" id="detAviso" hidden></div>
+        <div class="resumo" id="resumo"></div>
 
-        <div class="abas" id="abas"></div>
-        <input type="search" id="busca" placeholder="Filtrar por número ou descrição">
-        <div class="info" id="tabInfo"></div>
+        <div class="barra-abas">
+          <div class="abas" id="abas"></div>
+          <input type="search" id="busca" placeholder="Filtrar por número ou descrição">
+        </div>
         <div class="tabela"><table id="tabela"></table></div>
+        <div class="info" id="tabInfo"></div>
       </div>
     </div>
   </div>

@@ -38,20 +38,24 @@ function mostrarBaseInfo() {
   $('btnBaseCelular').disabled = !baseLinhas.length;
   atualizarPublicacao();
   if (!baseLinhas.length) {
-    $('baseInfo').innerHTML = '<span class="aviso">Nenhuma base carregada.</span>';
+    $('basePonto').className = 'ponto aviso';
+    $('baseResumo').textContent = 'Ainda não carregada';
+    $('baseInfo').textContent = 'Carregue o Excel exportado do sistema, com as colunas PATRIMONIO, DESCRICAO e CODFILIAL.';
+    $('baseDetalhes').open = true;
     return;
   }
   const semNumero = baseLinhas.length - baseLinhas.filter(l => l.p).length;
-  $('baseInfo').innerHTML = '<b>' + baseLinhas.length.toLocaleString('pt-BR') + '</b> linhas · ' + basePorFilial.size +
-    ' filiais<br><span class="info">' + basePorNumero.size.toLocaleString('pt-BR') + ' com plaqueta · ' +
-    semNumero.toLocaleString('pt-BR') + ' sem número<br>' + escapar(baseInfo.arquivo) + ' · ' + dataHora(baseInfo.em) + '</span>';
+  $('basePonto').className = 'ponto bom';
+  $('baseResumo').textContent = basePorNumero.size.toLocaleString('pt-BR') + ' ativos com plaqueta, ' + basePorFilial.size + ' filiais';
+  $('baseInfo').textContent = baseLinhas.length.toLocaleString('pt-BR') + ' linhas no arquivo, ' + semNumero.toLocaleString('pt-BR') +
+    ' sem número de patrimônio. Arquivo: ' + baseInfo.arquivo + ', carregado em ' + dataHora(baseInfo.em) + '.';
 }
 
 $('arqBase').addEventListener('change', async ev => {
   const arq = ev.target.files[0];
   ev.target.value = '';
   if (!arq) return;
-  $('baseInfo').textContent = 'Carregando base, aguarde...';
+  $('baseResumo').textContent = 'Carregando, aguarde...';
   await new Promise(r => setTimeout(r, 30));
   try {
     const linhas = await lerArquivoBase(arq);
@@ -62,7 +66,9 @@ $('arqBase').addEventListener('change', async ev => {
     mostrarBaseInfo();
     if (selecionada) abrir(selecionada);
   } catch (e) {
-    $('baseInfo').innerHTML = '<span class="erro">Erro: ' + escapar(e.message) + '</span>';
+    mostrarBaseInfo();
+    $('baseDetalhes').open = true;
+    $('baseInfo').innerHTML = '<span class="erro">Não foi possível ler o arquivo: ' + escapar(e.message) + '</span>';
   }
 });
 
@@ -78,17 +84,19 @@ let temSenha = false, tokenSalvo = '';
 
 async function atualizarPublicacao() {
   const pub = await kvLer('publicacao');
-  $('pubInfo').textContent = pub ? 'Última publicação: ' + dataHora(pub.em) + ' · ' + pub.ativos.toLocaleString('pt-BR') + ' ativos.' :
-    'Nenhuma base publicada por este computador.';
-  $('senhaInfo').innerHTML = temSenha ? '<span class="bom">Senha definida neste computador.</span>' :
-    '<span class="aviso">Defina a senha da base antes de publicar.</span>';
+  $('pubPonto').className = 'ponto ' + (pub ? 'bom' : '');
+  $('pubInfo').textContent = pub ? 'Última publicação em ' + dataHora(pub.em).slice(0, 16) : 'Nada publicado por este computador';
+  $('senhaInfo').innerHTML = temSenha ? '<span class="bom">A senha da base está definida neste computador.</span>' :
+    'Crie a senha que os celulares vão usar para abrir a base.';
   $('tokenInfo').textContent = tokenSalvo ? 'Token salvo neste computador. Deixe o campo vazio para usá-lo.' : '';
   $('btnEsquecer').hidden = !tokenSalvo;
   $('btnPublicar').disabled = !(baseLinhas.length && temSenha);
-  if (!baseLinhas.length) {
-    $('pubMsg').textContent = 'Para liberar o botão, carregue primeiro o Excel da base no bloco 1, acima.';
-    $('pubMsg').className = 'info aviso';
-  } else if ($('pubMsg').textContent.startsWith('Para liberar')) {
+  const pendencia = !baseLinhas.length ? 'Para publicar, carregue primeiro o Excel em "Base de ativos".' :
+    !temSenha ? 'Para publicar, defina a senha da base.' : '';
+  if (pendencia) {
+    $('pubMsg').textContent = pendencia;
+    $('pubMsg').className = 'nota aviso';
+  } else if ($('pubMsg').textContent.startsWith('Para publicar')) {
     $('pubMsg').textContent = '';
   }
 }
@@ -152,7 +160,7 @@ async function github(token, metodo, caminho, corpo) {
 }
 
 $('btnPublicar').addEventListener('click', async () => {
-  const msg = (t, c) => { $('pubMsg').textContent = t; $('pubMsg').className = 'info ' + (c || ''); };
+  const msg = (t, c) => { $('pubMsg').textContent = t; $('pubMsg').className = 'nota ' + (c || ''); };
   const token = $('token').value.trim() || tokenSalvo;
   if (!token) { msg('Informe o token do GitHub.', 'erro'); return; }
   const chave = await kvLer('chaveBase');
@@ -258,7 +266,7 @@ async function desenharConferencias() {
     const li = document.createElement('li');
     if (c.codigo === selecionada) li.className = 'sel';
     li.innerHTML = '<div class="txt"><div class="t1">' + escapar(c.codigo) + '</div><div class="t2">Filial ' + escapar(c.filial) +
-      ' · ' + (c.status === 'finalizada' ? 'Finalizada' : 'Em aberto') + '</div></div>';
+      '</div></div><span class="estado' + (c.status === 'finalizada' ? ' fim">Finalizada' : '">Em aberto') + '</span>';
     li.addEventListener('click', () => abrir(c.codigo));
     ul.appendChild(li);
   }
@@ -349,29 +357,30 @@ async function abrir(codigo) {
   const c = dados.conf;
   $('semSelecao').hidden = true;
   $('detalhe').hidden = false;
-  $('detTitulo').textContent = 'Conferência ' + c.codigo + ' · Filial ' + c.filial;
-  $('detInfo').textContent = (c.status === 'finalizada' ? 'Finalizada em ' + dataHora(c.fechadaEm) : 'Em aberto') +
-    ' · usuários: ' + (c.usuarios.join(', ') || '—') + ' · aparelhos: ' + (c.dispositivos.join(', ') || '—') +
-    (c.statusColetor ? ' · no coletor: ' + c.statusColetor : '');
+  $('detTitulo').textContent = c.codigo;
+  $('detInfo').textContent = 'Filial ' + c.filial + '. ' +
+    (c.status === 'finalizada' ? 'Finalizada no painel em ' + dataHora(c.fechadaEm).slice(0, 16) + '. ' : 'Em aberto no painel. ') +
+    'Conferida por ' + (c.usuarios.join(', ') || 'usuário não informado') +
+    (c.statusColetor ? '. No celular: ' + c.statusColetor.toLowerCase() : '') + '.';
   $('detAviso').hidden = dados.temBase;
-  $('detAviso').textContent = 'Sem base carregada: "A localizar" fica vazio e os dados vêm só do arquivo do coletor.';
+  $('detAviso').textContent = 'A base de ativos não está carregada. Sem ela, "A localizar" fica vazio e as descrições vêm só do arquivo do celular.';
   $('btnStatus').textContent = c.status === 'finalizada' ? 'Reabrir conferência' : 'Marcar como finalizada';
 
   const cartoes = [
-    [dados.totalFilial, 'ativos da filial no sistema'],
-    [dados.proprios, 'localizados da filial (' + pct(dados.proprios, dados.totalFilial) + ')'],
-    [dados.aLocalizar.length, 'a localizar (' + pct(dados.aLocalizar.length, dados.totalFilial) + ')'],
-    [dados.transferir.length, 'de outra filial (transferir)'],
-    [dados.naoCadastrados.length, 'não cadastrados'],
-    [dados.semPlaqueta, 'da filial sem nº de patrimônio']
+    [dados.totalFilial, 'ativos da filial no sistema', ''],
+    [dados.proprios, 'localizados da filial (' + pct(dados.proprios, dados.totalFilial) + ')', 'r-ok'],
+    [dados.aLocalizar.length, 'a localizar (' + pct(dados.aLocalizar.length, dados.totalFilial) + ')', ''],
+    [dados.transferir.length, 'de outra filial, a transferir', 'r-transf'],
+    [dados.naoCadastrados.length, 'não cadastrados na base', 'r-nao'],
+    [dados.semPlaqueta, 'da filial sem nº de patrimônio', '']
   ];
-  $('resumo').innerHTML = cartoes.map(([n, r]) => '<div><b>' + Number(n).toLocaleString('pt-BR') + '</b><span>' + escapar(r) + '</span></div>').join('');
+  $('resumo').innerHTML = cartoes.map(([n, r, cl]) => '<div class="' + (n ? cl : '') + '"><b>' + Number(n).toLocaleString('pt-BR') + '</b><span>' + escapar(r) + '</span></div>').join('');
 
   const abas = $('abas');
   abas.innerHTML = '';
   for (const a of ABAS) {
     const b = document.createElement('button');
-    b.textContent = a.nome + ' (' + dados[a.id].length.toLocaleString('pt-BR') + ')';
+    b.textContent = a.nome + ' ' + dados[a.id].length.toLocaleString('pt-BR');
     if (a.id === abaAtual) b.className = 'sel';
     b.addEventListener('click', () => { abaAtual = a.id; abrirAba(); });
     b.dataset.aba = a.id;
@@ -397,6 +406,7 @@ function desenharTabela() {
   for (const r of linhas.slice(0, LIMITE)) {
     html += '<tr>' + r.map((v, i) => '<td' + (i === iDesc ? ' class="larga"' : '') + '>' + escapar(v) + '</td>').join('') + '</tr>';
   }
+  if (!linhas.length) html += '<tr><td colspan="' + cab.length + '">' + (filtro ? 'Nenhuma linha corresponde ao filtro.' : 'Nada nesta lista.') + '</td></tr>';
   $('tabela').innerHTML = html + '</tbody>';
   $('tabInfo').textContent = linhas.length.toLocaleString('pt-BR') + ' linhas' +
     (linhas.length > LIMITE ? ' (mostrando as primeiras ' + LIMITE + '; o Excel traz todas)' : '');

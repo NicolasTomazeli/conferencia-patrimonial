@@ -23,15 +23,52 @@ async function irMenu() {
   pararCamera();
   conf = null;
   const todas = await confListar();
-  const abertas = todas.filter(c => c.status === 'aberta').length;
-  $('btnContinuar').textContent = 'Continuar conferência' + (abertas ? ' (' + abertas + ')' : '');
-  $('btnContinuar').disabled = !abertas;
-  $('btnFinalizadas').disabled = !todas.some(c => c.status === 'finalizada');
-  $('btnNova').disabled = !base.size;
-  $('menuMsg').textContent = base.size ? '' : 'Carregue a base de ativos antes de iniciar uma conferência.';
+  const abertas = todas.filter(c => c.status === 'aberta').sort((a, b) => b.criadaEm - a.criadaEm);
+  const ul = $('abertas');
+  ul.innerHTML = '';
+  for (const c of abertas) {
+    const qtd = (await leiturasDe(c.codigo)).length;
+    const li = document.createElement('li');
+    li.innerHTML = '<div class="txt"><div class="t1">' + escapar(c.codigo) + '</div><div class="t2">Filial ' +
+      escapar(c.filial) + ', ' + qtd + (qtd === 1 ? ' item lido' : ' itens lidos') + '</div></div>';
+    const b = document.createElement('button');
+    b.className = 'mini';
+    b.textContent = 'Continuar';
+    b.addEventListener('click', () => abrirLeitura(c.codigo));
+    li.appendChild(b);
+    ul.appendChild(li);
+  }
+  $('secAbertas').hidden = !abertas.length;
+  const finalizadas = todas.length - abertas.length;
+  $('btnFinalizadas').hidden = !finalizadas;
+  $('btnFinalizadas').textContent = 'Conferências finalizadas (' + finalizadas + ')';
+  liberarMenu();
+  atualizarInstalar();
   mostrar('telaMenu');
   verificarBase(false);
 }
+
+// ---------- Instalação ----------
+let promptInstalar = null;
+const jaInstalado = () => window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+
+function atualizarInstalar() {
+  if (jaInstalado()) { $('instalar').hidden = true; return; }
+  $('instalar').hidden = false;
+  $('instalarLinha').hidden = !promptInstalar;
+  $('instalarTexto').textContent = promptInstalar ?
+    'Ele ganha um ícone na tela inicial e funciona sem internet.' :
+    'Abra o menu do navegador (os três pontinhos no canto) e toque em "Adicionar à tela inicial" ou "Instalar app". Use o Chrome.';
+}
+window.addEventListener('beforeinstallprompt', ev => { ev.preventDefault(); promptInstalar = ev; atualizarInstalar(); });
+window.addEventListener('appinstalled', () => { promptInstalar = null; $('instalar').hidden = true; });
+$('btnInstalar').addEventListener('click', async () => {
+  if (!promptInstalar) return;
+  promptInstalar.prompt();
+  try { await promptInstalar.userChoice; } catch (e) {}
+  promptInstalar = null;
+  atualizarInstalar();
+});
 
 // ---------- Base ----------
 function montarBase(linhas) {
@@ -45,24 +82,28 @@ function montarBase(linhas) {
 
 function mostrarBaseInfo() {
   if (!base.size) {
-    $('baseInfo').innerHTML = '<span class="aviso">Nenhuma base carregada.</span>';
+    $('basePonto').className = 'ponto aviso';
+    $('baseResumo').textContent = 'Ainda não carregada';
+    $('baseInfo').textContent = 'Sem a base, o app não reconhece as plaquetas.';
+    $('baseDetalhes').open = true;
     return;
   }
-  $('baseInfo').innerHTML = '<b>' + base.size.toLocaleString('pt-BR') + '</b> ativos · ' +
-    totalPorFilial.size + ' filiais<br><span class="info">Arquivo: ' + escapar(baseInfo.arquivo) +
-    ' · carregada em ' + dataHora(baseInfo.em) + '</span>';
+  $('basePonto').className = 'ponto bom';
+  $('baseResumo').textContent = base.size.toLocaleString('pt-BR') + ' ativos, atualizada em ' + dataHora(baseInfo.em).slice(0, 10);
+  $('baseInfo').textContent = totalPorFilial.size + ' filiais. Origem: ' + baseInfo.arquivo + ', carregada em ' + dataHora(baseInfo.em) + '.';
 }
 
 function liberarMenu() {
   $('btnNova').disabled = !base.size;
-  if (base.size) $('menuMsg').textContent = '';
+  $('menuMsg').className = 'nota aviso';
+  $('menuMsg').textContent = base.size ? '' : 'Antes de começar, carregue a base de ativos logo abaixo.';
 }
 
 $('arqBase').addEventListener('change', async ev => {
   const arq = ev.target.files[0];
   ev.target.value = '';
   if (!arq) return;
-  $('baseInfo').textContent = 'Carregando base, aguarde...';
+  syncMsg('Carregando a base, aguarde...');
   try {
     const linhas = (await lerArquivoBase(arq)).filter(l => l.p).map(l => [l.p, l.d, l.f]);
     if (!linhas.length) throw new Error('Nenhum ativo com número de patrimônio no arquivo.');
@@ -71,9 +112,11 @@ $('arqBase').addEventListener('change', async ev => {
     await kvGravar('base', Array.from(base, ([p, v]) => [p, v[0], v[1]]));
     await kvGravar('baseInfo', baseInfo);
     mostrarBaseInfo();
+    syncMsg('Base carregada do arquivo.', 'bom');
     irMenu();
   } catch (e) {
-    $('baseInfo').innerHTML = '<span class="erro">Erro ao carregar: ' + escapar(e.message) + '</span>';
+    syncMsg('Não foi possível carregar o arquivo: ' + e.message, 'erro');
+    mostrarBaseInfo();
   }
 });
 
@@ -82,11 +125,12 @@ let verificando = false, verificadoEm = 0, metaPendente = null;
 
 function syncMsg(texto, classe) {
   $('syncMsg').textContent = texto || '';
-  $('syncMsg').className = 'info ' + (classe || '');
+  $('syncMsg').className = 'nota ' + (classe || '');
 }
 
 function pedirSenha(texto) {
   $('senhaBox').hidden = false;
+  $('baseDetalhes').open = true;
   syncMsg(texto, 'aviso');
 }
 
@@ -220,7 +264,7 @@ $('arqConf').addEventListener('change', async ev => {
   const arq = ev.target.files[0];
   ev.target.value = '';
   if (!arq) return;
-  const aviso = (texto, classe) => { $('menuMsg').innerHTML = '<span class="' + classe + '">' + escapar(texto) + '</span>'; };
+  const aviso = (texto, classe) => { $('menuMsg').className = 'nota ' + classe; $('menuMsg').textContent = texto; };
   try {
     const { info, porCodigo } = await lerArquivoConferencia(arq);
     if (porCodigo.size > 1) throw new Error('o arquivo tem mais de uma conferência.');
@@ -258,7 +302,8 @@ $('arqConf').addEventListener('change', async ev => {
       await leituraGravar(l);
     }
     await abrirLeitura(codigo);
-    $('camMsg').innerHTML = '<span class="bom">Conferência importada: ' + itens.length + ' leituras no arquivo, ' + novos + ' novas neste aparelho.</span>';
+    $('camMsg').className = 'nota bom';
+    $('camMsg').textContent = 'Conferência importada: ' + itens.length + ' leituras no arquivo, ' + novos + ' novas neste aparelho.';
   } catch (e) {
     aviso('Não foi possível importar: ' + e.message, 'erro');
   }
@@ -269,14 +314,14 @@ async function abrirLista(status) {
   const todas = (await confListar()).filter(c => c.status === status).sort((a, b) => b.criadaEm - a.criadaEm);
   $('listaTitulo').textContent = status === 'aberta' ? 'Continuar conferência' : 'Conferências finalizadas';
   $('listaVazia').hidden = todas.length > 0;
+  $('listaDica').hidden = status === 'aberta' || !todas.length;
   const ul = $('listaConfs');
   ul.innerHTML = '';
   for (const c of todas) {
     const qtd = (await leiturasDe(c.codigo)).length;
     const li = document.createElement('li');
     li.innerHTML = '<div class="txt"><div class="t1">' + escapar(c.codigo) + '</div><div class="t2">Filial ' +
-      escapar(c.filial) + ' · ' + qtd + ' lidos · ' + escapar(c.usuario) + ' · ' +
-      dataHora(status === 'aberta' ? c.criadaEm : c.finalizadaEm) + '</div></div>';
+      escapar(c.filial) + ', ' + qtd + ' itens, ' + dataHora(status === 'aberta' ? c.criadaEm : c.finalizadaEm).slice(0, 16) + '</div></div>';
     const b = document.createElement('button');
     b.className = 'mini' + (status === 'aberta' ? '' : ' sec');
     b.textContent = status === 'aberta' ? 'Abrir' : 'Enviar';
@@ -286,7 +331,6 @@ async function abrirLista(status) {
   }
   mostrar('telaLista');
 }
-$('btnContinuar').addEventListener('click', () => abrirLista('aberta'));
 $('btnFinalizadas').addEventListener('click', () => abrirLista('finalizada'));
 document.querySelectorAll('[data-voltar]').forEach(b => b.addEventListener('click', irMenu));
 
@@ -298,13 +342,13 @@ async function abrirLeitura(codigo) {
   $('leFilial').textContent = conf.filial;
   $('leCodigo').textContent = conf.codigo;
   $('leSetor').value = conf.setorAtual || '';
-  $('cFilialRot').textContent = 'de ' + (totalPorFilial.get(conf.filial) || 0).toLocaleString('pt-BR') + ' da filial';
   $('ultNum').textContent = '—';
-  $('ultDesc').textContent = 'Aponte a câmera para a plaqueta.';
+  $('ultDesc').textContent = 'Nenhuma leitura ainda.';
   $('ultSit').textContent = '';
-  $('ultimo').className = 'card ultimo';
+  $('ultimo').className = 'plaqueta';
   $('manual').value = '';
   $('camMsg').textContent = '';
+  $('camMsg').className = 'nota';
   $('ligarCam').hidden = false;
   atualizarContadores();
   desenharLista();
@@ -327,19 +371,23 @@ function atualizarContadores() {
   $('cFilial').textContent = filial;
   $('cTransf').textContent = transf;
   $('cNao').textContent = nao;
+  const total = totalPorFilial.get(conf.filial) || 0;
+  $('cFilialRot').textContent = 'de ' + total.toLocaleString('pt-BR') + ' ativos desta filial';
+  $('barra').style.width = (total ? Math.min(100, 100 * filial / total) : 0) + '%';
 }
 
 function desenharLista() {
   const itens = Array.from(leituras.values()).sort((a, b) => b.ultima - a.ultima);
   const ul = $('listaLidos');
   ul.innerHTML = '';
+  $('listaNada').textContent = itens.length ? 'Toque em um item para remover.' : 'Os itens aparecem aqui conforme você lê.';
   for (const l of itens.slice(0, 100)) {
     const s = situacaoDe(l);
     const li = document.createElement('li');
-    const tag = s === 'Transferência' ? '<span class="tag transf">FILIAL ' + escapar(l.filialBase) + '</span>' :
-      s === 'Não cadastrado' ? '<span class="tag nao">NÃO CADASTRADO</span>' : '';
+    const tag = s === 'Transferência' ? '<span class="tag transf">Filial ' + escapar(l.filialBase) + '</span>' :
+      s === 'Não cadastrado' ? '<span class="tag nao">Não cadastrado</span>' : '';
     li.innerHTML = '<div class="txt"><div class="t1">' + escapar(l.patrimonio) + ' ' + tag + '</div><div class="t2">' +
-      escapar(l.descricao || '') + (l.setor ? ' · ' + escapar(l.setor) : '') + '</div></div>';
+      escapar(l.descricao || 'Sem descrição') + (l.setor ? ' (' + escapar(l.setor) + ')' : '') + '</div></div>';
     li.addEventListener('click', async () => {
       if (!confirm('Remover o patrimônio ' + l.patrimonio + ' desta conferência?')) return;
       await leituraApagar(conf.codigo, l.patrimonio);
@@ -379,10 +427,10 @@ async function registrar(valor, origem) {
   const s = situacaoDe(l);
   $('ultNum').textContent = p;
   $('ultDesc').textContent = l.cadastrado ? l.descricao : 'Número não encontrado na base';
-  $('ultSit').textContent = (s === 'OK' ? 'Pertence a esta filial' :
-    s === 'Transferência' ? 'ATENÇÃO: pertence à filial ' + l.filialBase :
-    'NÃO CADASTRADO: confira o número') + (repetido ? ' · já lido antes (' + l.qtd + 'x)' : '');
-  $('ultimo').className = 'card ultimo ' + (s === 'OK' ? 's-ok' : s === 'Transferência' ? 's-transf' : 's-nao');
+  $('ultSit').textContent = (s === 'OK' ? 'Pertence a esta filial.' :
+    s === 'Transferência' ? 'Atenção: pertence à filial ' + l.filialBase + '.' :
+    'Não cadastrado. Confira o número.') + (repetido ? ' Já lido antes (' + l.qtd + ' vezes).' : '');
+  $('ultimo').className = 'plaqueta ' + (s === 'OK' ? 's-ok' : s === 'Transferência' ? 's-transf' : 's-nao');
   som(repetido ? 'repetido' : s === 'OK' ? 'ok' : s === 'Transferência' ? 'transf' : 'erro');
   $('mira').classList.add('ok');
   setTimeout(() => $('mira').classList.remove('ok'), 400);
@@ -426,7 +474,8 @@ $('btnCamera').addEventListener('click', ligarCamera);
 async function ligarCamera() {
   iniciarAudio();
   if (!('BarcodeDetector' in window)) {
-    $('camMsg').innerHTML = '<span class="erro">Este navegador não tem leitor de código de barras. Use o Chrome no celular, ou digite os números.</span>';
+    $('camMsg').className = 'nota erro';
+    $('camMsg').textContent = 'Este navegador não lê código de barras. Abra o app no Chrome, ou digite os números.';
     return;
   }
   try {
@@ -447,11 +496,13 @@ async function ligarCamera() {
     $('btnLanterna').hidden = !caps.torch;
     $('ligarCam').hidden = true;
     $('camMsg').textContent = '';
+    $('camMsg').className = 'nota';
     try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     candidato = null; repeticoes = 0;
     if (!lendo) { lendo = true; cicloLeitura(); }
   } catch (e) {
-    $('camMsg').innerHTML = '<span class="erro">Não foi possível abrir a câmera: ' + escapar(e.message) + '</span>';
+    $('camMsg').className = 'nota erro';
+    $('camMsg').textContent = 'Não foi possível abrir a câmera. Verifique se o app tem permissão de câmera. (' + e.message + ')';
   }
 }
 
@@ -575,7 +626,7 @@ $('btnPausar').addEventListener('click', irMenu);
   baseInfo = await kvLer('baseInfo');
   if (salva && baseInfo) montarBase(salva);
   mostrarBaseInfo();
-  $('rodape').textContent = 'Versão ' + VERSAO_APP + ' · aparelho ' + dispositivo;
+  $('rodape').textContent = 'Versão ' + VERSAO_APP + ', aparelho ' + dispositivo;
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   irMenu();
 })();
