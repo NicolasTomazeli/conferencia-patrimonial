@@ -85,6 +85,12 @@ async function atualizarPublicacao() {
   $('tokenInfo').textContent = tokenSalvo ? 'Token salvo neste computador. Deixe o campo vazio para usá-lo.' : '';
   $('btnEsquecer').hidden = !tokenSalvo;
   $('btnPublicar').disabled = !(baseLinhas.length && temSenha);
+  if (!baseLinhas.length) {
+    $('pubMsg').textContent = 'Para liberar o botão, carregue primeiro o Excel da base no bloco 1, acima.';
+    $('pubMsg').className = 'info aviso';
+  } else if ($('pubMsg').textContent.startsWith('Para liberar')) {
+    $('pubMsg').textContent = '';
+  }
 }
 
 $('btnEsquecer').addEventListener('click', async () => {
