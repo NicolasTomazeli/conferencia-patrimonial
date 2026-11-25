@@ -1,10 +1,10 @@
 // Service worker: permite abrir o app sem internet.
 // Estratégia: tenta a rede primeiro (para receber atualizações) e cai no cache se estiver offline.
-const CACHE = 'conferencia-v7';
+const CACHE = 'conferencia-v8';
 const ARQUIVOS = [
   './', './index.html', './app.js', './comum.js', './config.js', './estilo.css',
   './painel.html', './painel.js',
-  './lib/xlsx.full.min.js', './manifest.json',
+  './lib/xlsx.full.min.js', './lib/zxing-reader.js', './lib/zxing_reader.wasm', './manifest.json',
   './icons/icon-192.png', './icons/icon-512.png',
   './fontes/barlow-latin-400-normal.woff2', './fontes/barlow-latin-500-normal.woff2',
   './fontes/barlow-latin-600-normal.woff2', './fontes/barlow-latin-700-normal.woff2',

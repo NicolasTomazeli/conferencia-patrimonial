@@ -483,6 +483,44 @@ function vibrar(p) { if (navigator.vibrate) navigator.vibrate(p); }
 //  - aceita na hora um número que existe na base; número desconhecido precisa aparecer em 2 quadros.
 let cameras = [], cameraId = null, formatos = null, quadro = 0, recorte = null;
 
+// Leitor de reforço (ZXing em WebAssembly). Entra quando o leitor nativo não acha nada no quadro:
+// ele tenta três formas diferentes de separar barras e fundo, o que resolve plaquetas com pouco
+// contraste, reflexo ou barras finas. Também é o único leitor em navegadores sem leitor nativo.
+const REFORCO_MODOS = ['FixedThreshold', 'GlobalHistogram', 'LocalAverage'];
+const REFORCO_LARGURA = 1600;
+let reforco = null, reforcoTela = null, reforcoVez = 0;
+
+function carregarReforco() {
+  if (reforco) return reforco;
+  reforco = (async () => {
+    if (typeof ZXingWASM === 'undefined') return false;
+    try {
+      ZXingWASM.prepareZXingModule({
+        overrides: { locateFile: (arq, prefixo) => arq.endsWith('.wasm') ? 'lib/zxing_reader.wasm' : prefixo + arq }
+      });
+      await ZXingWASM.getZXingModule();
+      return true;
+    } catch (e) { return false; }
+  })();
+  return reforco;
+}
+
+async function lerReforco(fonte, largura, altura) {
+  if (!(await carregarReforco()) || !largura || !altura) return [];
+  const escala = Math.min(1, REFORCO_LARGURA / largura);
+  const w = Math.round(largura * escala), h = Math.round(altura * escala);
+  reforcoTela = reforcoTela || document.createElement('canvas');
+  if (reforcoTela.width !== w || reforcoTela.height !== h) { reforcoTela.width = w; reforcoTela.height = h; }
+  const ctx = reforcoTela.getContext('2d', { alpha: false, willReadFrequently: true });
+  ctx.drawImage(fonte, 0, 0, w, h);
+  const modo = REFORCO_MODOS[reforcoVez++ % REFORCO_MODOS.length];
+  const achados = await ZXingWASM.readBarcodes(ctx.getImageData(0, 0, w, h), {
+    formats: ['Code128', 'Code39'], binarizer: modo, tryHarder: true,
+    tryRotate: false, tryInvert: false, tryDownscale: false, maxNumberOfSymbols: 2
+  });
+  return achados.map(a => a.text);
+}
+
 $('btnCamera').addEventListener('click', () => ligarCamera());
 
 function abrirStream(deviceId) {
@@ -499,12 +537,14 @@ function cameraPrincipal(lista) {
 async function ligarCamera(trocarPara) {
   iniciarAudio();
   const aviso = texto => { $('camMsg').className = 'nota erro'; $('camMsg').textContent = texto; };
-  if (!('BarcodeDetector' in window)) {
+  const temNativo = 'BarcodeDetector' in window;
+  const temReforco = await carregarReforco();
+  if (!temNativo && !temReforco) {
     aviso('Este navegador não lê código de barras. Abra o app no Chrome, ou digite os números.');
     return;
   }
   try {
-    if (!formatos) {
+    if (temNativo && !formatos) {
       const suportados = await BarcodeDetector.getSupportedFormats();
       formatos = ['code_128', 'code_39'].filter(f => suportados.includes(f));
       if (!formatos.length) formatos = ['code_128'];
@@ -549,6 +589,9 @@ async function ligarCamera(trocarPara) {
     $('ligarCam').hidden = true;
     $('camMsg').textContent = '';
     $('camMsg').className = 'nota';
+    const cfg = track.getSettings();
+    $('camInfo').textContent = 'Câmera ' + (cfg.width || '?') + '×' + (cfg.height || '?') + ', leitor ' +
+      (temNativo ? 'nativo' : '') + (temNativo && temReforco ? ' + ' : '') + (temReforco ? 'reforço' : '') + '.';
     try { if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     candidato = null; repeticoes = 0;
     if (!lendo) { lendo = true; proximoQuadro(); }
@@ -587,6 +630,7 @@ function pararCamera() {
   $('btnLanterna').hidden = true;
   $('btnTrocar').hidden = true;
   $('zoomBox').hidden = true;
+  $('camInfo').textContent = '';
   $('ligarCam').hidden = false;
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
@@ -636,8 +680,12 @@ async function analisarQuadro() {
       recorte.getContext('2d', { alpha: false }).drawImage(v, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
       fonte = recorte;
     }
-    const achados = await detector.detect(fonte);
-    const validos = achados.map(a => normalizarPatrimonio(a.rawValue)).filter(Boolean);
+    let brutos = detector ? (await detector.detect(fonte)).map(a => a.rawValue) : [];
+    if (!brutos.some(normalizarPatrimonio)) {
+      // nada pelo leitor nativo: passa o mesmo quadro pelo leitor de reforço
+      brutos = await lerReforco(fonte, r ? r.w : v.videoWidth, r ? r.h : v.videoHeight);
+    }
+    const validos = brutos.map(normalizarPatrimonio).filter(Boolean);
     const valor = validos.find(p => base.has(p)) || validos[0] || '';
     if (valor) {
       if (valor === candidato) repeticoes++; else { candidato = valor; repeticoes = 1; }
