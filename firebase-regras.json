@@ -1,0 +1,22 @@
+{
+  "rules": {
+    "v1": {
+      "r": {
+        ".read": true,
+        "$id": {
+          ".write": "$id.matches(/^[0-9a-f]{32}$/)",
+          ".validate": "newData.hasChildren(['t']) && newData.child('t').isNumber()",
+          "$outro": { ".validate": "$outro === 't'" }
+        }
+      },
+      "c": {
+        "$id": {
+          ".read": true,
+          ".write": "$id.matches(/^[0-9a-f]{32}$/)",
+          ".validate": "newData.hasChildren(['t', 'd']) && newData.child('t').isNumber() && newData.child('d').isString() && newData.child('d').val().length < 600000",
+          "$outro": { ".validate": "$outro === 't' || $outro === 'd'" }
+        }
+      }
+    }
+  }
+}

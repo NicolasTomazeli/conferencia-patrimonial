@@ -1,7 +1,7 @@
 'use strict';
 // Funções compartilhadas entre o coletor (celular) e o painel (PC).
 
-const VERSAO_APP = '1.3.0';
+const VERSAO_APP = '1.4.0';
 const ABA_LEITURAS = 'Conferencia';
 const ABA_INFO = 'Info';
 const COLUNAS_LEITURA = [
@@ -303,4 +303,75 @@ function bytesParaBase64(bytes) {
   let s = '';
   for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
   return btoa(s);
+}
+
+function base64ParaBytes(b64) {
+  const s = atob(b64);
+  const bytes = new Uint8Array(s.length);
+  for (let i = 0; i < s.length; i++) bytes[i] = s.charCodeAt(i);
+  return bytes;
+}
+
+// Grava e apaga várias leituras em uma única transação.
+function leiturasLote(gravar, apagar) {
+  return new Promise((resolve, reject) => {
+    const t = db.transaction('leituras', 'readwrite');
+    const s = t.objectStore('leituras');
+    for (const chave of apagar || []) s.delete(chave);
+    for (const l of gravar || []) s.put(l);
+    t.oncomplete = () => resolve();
+    t.onerror = () => reject(t.error);
+    t.onabort = () => reject(t.error);
+  });
+}
+
+// ---------- Acompanhamento ao vivo ----------
+// Cada conferência é enviada como um retrato completo, cifrado com AES-256-GCM.
+// A chave vem da mesma senha da base (PBKDF2), com um sal próprio, e fica guardada como não extraível.
+const VIVO_SAL = new TextEncoder().encode('conferencia-patrimonial/ao-vivo/v1');
+let chaveVivoAtual = null;
+
+const vivoLigado = () => !!(FIREBASE_URL && chaveVivoAtual);
+const urlVivo = caminho => FIREBASE_URL.replace(/\/+$/, '') + '/v1/' + caminho + '.json';
+
+async function prepararVivo(chaveBase) {
+  chaveVivoAtual = await derivarChave(chaveBase, VIVO_SAL, CRIPTO_ITERACOES);
+  await kvGravar('chaveVivo', chaveVivoAtual);
+}
+
+async function carregarVivo() {
+  chaveVivoAtual = (await kvLer('chaveVivo')) || null;
+  if (!chaveVivoAtual) {
+    const chaveBase = await kvLer('chaveBase');
+    if (chaveBase) await prepararVivo(chaveBase);
+  }
+}
+
+async function idVivo(codigo, dispositivo) {
+  return (await sha256Hex(new TextEncoder().encode(codigo + '|' + dispositivo))).slice(0, 32);
+}
+
+async function cifrarVivo(objeto) {
+  const claro = await transformar(new TextEncoder().encode(JSON.stringify(objeto)), new CompressionStream('gzip'));
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const cifrado = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, chaveVivoAtual, claro));
+  const tudo = new Uint8Array(12 + cifrado.length);
+  tudo.set(iv, 0); tudo.set(cifrado, 12);
+  return bytesParaBase64(tudo);
+}
+
+async function decifrarVivo(b64) {
+  const bytes = base64ParaBytes(b64);
+  const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, chaveVivoAtual, bytes.slice(12));
+  return JSON.parse(new TextDecoder().decode(await transformar(new Uint8Array(claro), new DecompressionStream('gzip'))));
+}
+
+async function pedirVivo(metodo, caminho, corpo) {
+  const r = await fetch(urlVivo(caminho), {
+    method: metodo, cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+    headers: corpo ? { 'Content-Type': 'application/json' } : undefined,
+    body: corpo ? JSON.stringify(corpo) : undefined
+  });
+  if (!r.ok) throw new Error('erro ' + r.status);
+  return r.json();
 }

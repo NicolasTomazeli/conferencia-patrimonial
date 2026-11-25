@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://api.github.com; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://api.github.com https://*.firebaseio.com https://*.firebasedatabase.app; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Painel · Conferência Patrimonial</title>
@@ -25,6 +25,8 @@
           <input type="file" id="arqConf" accept=".xlsx" multiple>
         </label>
         <div class="info" id="importMsg"></div>
+        <div class="info" id="vivoInfo"></div>
+        <button id="btnGeral" class="sec" style="margin-top:12px" hidden>Ver todas as conferências</button>
         <p class="info" id="confVazia">Nenhuma conferência importada ainda.</p>
         <ul class="lista confs" id="listaConfs" style="margin-top:8px"></ul>
       </div>
@@ -89,6 +91,16 @@
         </ol>
       </div>
 
+      <div id="geral" hidden>
+        <div class="cabecalho">
+          <div class="titulo">
+            <h2>Conferências</h2>
+            <div class="info" id="geralInfo"></div>
+          </div>
+        </div>
+        <div class="tabela solta"><table id="tabGeral"></table></div>
+      </div>
+
       <div id="detalhe" hidden>
         <div class="cabecalho">
           <div class="titulo">
@@ -116,6 +128,7 @@
 </main>
 
 <script src="lib/xlsx.full.min.js"></script>
+<script src="config.js"></script>
 <script src="comum.js"></script>
 <script src="painel.js"></script>
 </body>

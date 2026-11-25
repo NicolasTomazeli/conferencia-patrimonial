@@ -107,12 +107,19 @@ ul.lista.cartoes li { margin-top: 8px; padding: 12px 14px; border: 1px solid var
 /* ---------- leitura ---------- */
 .cam { position: relative; overflow: hidden; aspect-ratio: 16/10; border-radius: var(--raio); background: #0c1116; }
 .cam video { display: block; width: 100%; height: 100%; object-fit: cover; }
-.mira { position: absolute; left: 8%; right: 8%; top: 32%; height: 36%; border: 3px solid rgba(255,255,255,.75); border-radius: 10px; pointer-events: none; }
+.mira { position: absolute; left: 6%; right: 6%; top: 28%; height: 44%; border: 3px solid rgba(255,255,255,.75); border-radius: 10px; pointer-events: none; }
 .cam:has(.ligar:not([hidden])) .mira { display: none; }
 .mira.ok { border-color: #4be08f; box-shadow: 0 0 0 4px rgba(75,224,143,.3); }
 .cam .ligar { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px; padding: 24px; color: #cfd8e1; text-align: center; font-size: 15px; }
 .cam .ligar button { width: auto; padding: 12px 24px; }
-.cam .lanterna { position: absolute; right: 10px; bottom: 10px; width: auto; min-height: 44px; padding: 8px 14px; background: rgba(12,17,22,.75); color: #fff; font-size: 15px; }
+.cam { aspect-ratio: 4/3; }
+.cam .sobre, .cam .zoom button { width: auto; min-height: 44px; padding: 8px 14px; border: 1px solid rgba(255,255,255,.25); background: rgba(12,17,22,.72); color: #fff; font-size: 15px; }
+.cam .sobre { position: absolute; }
+.cam .lanterna { right: 10px; bottom: 10px; }
+.cam .trocar { right: 10px; top: 10px; }
+.cam .zoom { position: absolute; left: 10px; bottom: 10px; display: flex; gap: 6px; }
+.cam .zoom button { min-width: 48px; padding: 8px 10px; font-family: var(--numero); font-size: 17px; }
+.cam .ligado { background: #fff !important; color: var(--tinta) !important; }
 
 /* a plaqueta: o elemento que carrega a identidade do app */
 .plaqueta { position: relative; margin-top: 12px; padding: 14px 16px 14px 22px; border: 1px solid #b4bcc6; border-radius: 14px; background: linear-gradient(180deg, #fdfdfe 0%, #e9edf1 55%, #f4f6f8 100%); box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(23,33,43,.12); overflow: hidden; }
@@ -154,7 +161,8 @@ body.painel .grade { display: grid; grid-template-columns: 330px minmax(0, 1fr);
 @media (max-width: 900px) { body.painel .grade { grid-template-columns: 1fr; } }
 body.painel button, body.painel .btn { min-height: 42px; padding: 8px 14px; font-size: 15px; }
 body.painel input[type=text], body.painel input[type=password], body.painel input[type=search] { min-height: 42px; font-size: 15px; }
-body.painel .lateral { position: sticky; top: 72px; }
+body.painel .lateral { position: sticky; top: 72px; max-height: calc(100vh - 88px); overflow-y: auto; }
+@media (max-width: 900px) { body.painel .lateral { position: static; max-height: none; } }
 body.painel .lateral .bloco:first-child, body.painel .conteudo > :first-child { margin-top: 0; }
 .confs li { cursor: pointer; padding: 10px 12px !important; border: 1px solid transparent !important; border-radius: 10px; }
 .confs li:hover { background: #eef1f4; }
@@ -196,4 +204,9 @@ td:first-child { font-family: var(--numero); font-size: 16px; font-weight: 600; 
 td.larga { white-space: normal; min-width: 280px; }
 th { position: sticky; top: 0; background: #edf0f3; color: var(--tinta-2); font-weight: 600; }
 tbody tr:hover { background: #f0f2f5; }
+.tabela.solta { margin-top: 16px; border-top: 1px solid var(--borda); border-radius: var(--raio); }
+#tabGeral tbody tr { cursor: pointer; }
+#tabGeral td.n { font-family: var(--numero); font-size: 17px; font-weight: 600; }
+.agora { display: inline-flex; align-items: center; gap: 6px; font-weight: 600; color: var(--ok); }
+.agora::before { content: ""; width: 9px; height: 9px; border-radius: 50%; background: var(--ok); }
 .senha-gerada { font-family: var(--numero) !important; font-weight: 700 !important; letter-spacing: 1px; }

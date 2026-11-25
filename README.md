@@ -32,3 +32,12 @@ O painel publica a base em `dados/base.bin` (criptografada) e `dados/base.json` 
 - **Conteúdo:** somente patrimônio, descrição e filial. Valores não são publicados.
 - **Senha e token** nunca são enviados ao repositório. A senha fica no navegador como chave não extraível; o token do GitHub só é guardado se a opção "Lembrar" for marcada.
 - As páginas usam Content-Security-Policy restrita: só carregam scripts do próprio site e só se conectam ao próprio site e a `api.github.com`.
+
+## Acompanhamento ao vivo
+
+Com `FIREBASE_URL` preenchido em `config.js`, o coletor envia cada conferência para um Firebase Realtime Database e o painel mostra o andamento sem importar arquivos.
+
+- Cada envio é um retrato completo da conferência, cifrado com AES-256-GCM. A chave vem da mesma senha da base, com sal próprio. O banco só guarda texto cifrado.
+- O coletor envia ao criar, ao finalizar e, durante a leitura, no máximo a cada 15 segundos. Sem internet, guarda e envia quando o sinal volta.
+- O painel consulta o banco a cada 15 segundos e ignora o que não abre com a senha.
+- As regras do banco estão em `firebase-regras.json`.

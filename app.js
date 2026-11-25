@@ -182,6 +182,8 @@ async function baixarBase(meta, chave) {
   baseInfo = { arquivo: 'Base publicada', em: Date.now(), total: base.size, versao: meta.versao };
   await kvGravar('base', Array.from(base, ([p, v]) => [p, v[0], v[1]]));
   await kvGravar('baseInfo', baseInfo);
+  await prepararVivo(chave);
+  if (vivoPendentes.size) agendarVivo(0);
   metaPendente = null;
   $('senhaBox').hidden = true;
   $('senhaBase').value = '';
@@ -256,6 +258,7 @@ $('btnCriar').addEventListener('click', async () => {
     baseArquivo: baseInfo ? baseInfo.arquivo : ''
   };
   await confGravar(nova);
+  marcarVivo(nova.codigo, true);
   abrirLeitura(nova.codigo);
 });
 
@@ -301,6 +304,7 @@ $('arqConf').addEventListener('change', async ev => {
       if (antiga) juntarLeituras(l, antiga); else novos++;
       await leituraGravar(l);
     }
+    marcarVivo(codigo, true);
     await abrirLeitura(codigo);
     $('camMsg').className = 'nota bom';
     $('camMsg').textContent = 'Conferência importada: ' + itens.length + ' leituras no arquivo, ' + novos + ' novas neste aparelho.';
@@ -350,6 +354,7 @@ async function abrirLeitura(codigo) {
   $('camMsg').textContent = '';
   $('camMsg').className = 'nota';
   $('ligarCam').hidden = false;
+  vivoMsg('');
   atualizarContadores();
   desenharLista();
   mostrar('telaLeitura');
@@ -391,6 +396,7 @@ function desenharLista() {
     li.addEventListener('click', async () => {
       if (!confirm('Remover o patrimônio ' + l.patrimonio + ' desta conferência?')) return;
       await leituraApagar(conf.codigo, l.patrimonio);
+      marcarVivo(conf.codigo);
       leituras.delete(l.patrimonio);
       atualizarContadores();
       desenharLista();
@@ -423,6 +429,7 @@ async function registrar(valor, origem) {
     leituras.set(p, l);
   }
   await leituraGravar(l);
+  marcarVivo(conf.codigo);
 
   const s = situacaoDe(l);
   $('ultNum').textContent = p;
@@ -468,42 +475,109 @@ function som(tipo) {
 }
 function vibrar(p) { if (navigator.vibrate) navigator.vibrate(p); }
 
-// ---------- Câmera ----------
-$('btnCamera').addEventListener('click', ligarCamera);
+// ---------- Câmera e leitor ----------
+// Pontos que deixam a leitura mais forte:
+//  - escolhe a câmera traseira principal (não a grande-angular) e permite trocar;
+//  - pede vídeo em alta resolução e começa com zoom 2x, para ler de mais longe e sem perder o foco;
+//  - analisa todos os quadros, alternando a região da mira em resolução cheia com o quadro inteiro;
+//  - aceita na hora um número que existe na base; número desconhecido precisa aparecer em 2 quadros.
+let cameras = [], cameraId = null, formatos = null, quadro = 0, recorte = null;
 
-async function ligarCamera() {
+$('btnCamera').addEventListener('click', () => ligarCamera());
+
+function abrirStream(deviceId) {
+  const video = deviceId ? { deviceId: { exact: deviceId } } : { facingMode: { ideal: 'environment' } };
+  Object.assign(video, { width: { ideal: 2560 }, height: { ideal: 1440 }, frameRate: { ideal: 30 } });
+  return navigator.mediaDevices.getUserMedia({ audio: false, video });
+}
+
+// No Android os rótulos são do tipo "camera2 0, facing back". A principal costuma ser a de número 0.
+function cameraPrincipal(lista) {
+  return lista.find(d => /(^|\D)0(\D|$)/.test(d.label.replace(/camera2/i, ''))) || lista[0];
+}
+
+async function ligarCamera(trocarPara) {
   iniciarAudio();
+  const aviso = texto => { $('camMsg').className = 'nota erro'; $('camMsg').textContent = texto; };
   if (!('BarcodeDetector' in window)) {
-    $('camMsg').className = 'nota erro';
-    $('camMsg').textContent = 'Este navegador não lê código de barras. Abra o app no Chrome, ou digite os números.';
+    aviso('Este navegador não lê código de barras. Abra o app no Chrome, ou digite os números.');
     return;
   }
   try {
-    detector = detector || new BarcodeDetector({ formats: ['code_128'] });
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } }
-    });
+    if (!formatos) {
+      const suportados = await BarcodeDetector.getSupportedFormats();
+      formatos = ['code_128', 'code_39'].filter(f => suportados.includes(f));
+      if (!formatos.length) formatos = ['code_128'];
+      detector = new BarcodeDetector({ formats: formatos });
+    }
+    if (track) { try { track.stop(); } catch (e) {} track = null; }
+    if (trocarPara) cameraId = trocarPara;
+    else if (!cameraId) cameraId = (await kvLer('cameraId')) || null;
+
+    let stream;
+    try { stream = await abrirStream(cameraId); }
+    catch (e) { if (!cameraId) throw e; cameraId = null; stream = await abrirStream(null); }
+
+    // com a permissão concedida, os rótulos aparecem: confere se estamos na câmera principal
+    const todas = (await navigator.mediaDevices.enumerateDevices()).filter(d => d.kind === 'videoinput');
+    cameras = todas.filter(d => /back|rear|traseira|environment/i.test(d.label));
+    if (!cameraId && cameras.length > 1) {
+      const alvo = cameraPrincipal(cameras);
+      const atual = stream.getVideoTracks()[0].getSettings().deviceId;
+      if (alvo && alvo.deviceId && alvo.deviceId !== atual) {
+        stream.getTracks().forEach(t => t.stop());
+        try { stream = await abrirStream(alvo.deviceId); cameraId = alvo.deviceId; }
+        catch (e) { stream = await abrirStream(null); }
+      }
+    }
+
     $('video').srcObject = stream;
     await $('video').play();
     track = stream.getVideoTracks()[0];
     track.addEventListener('ended', pararCamera);
     const caps = track.getCapabilities ? track.getCapabilities() : {};
-    if (caps.focusMode && caps.focusMode.includes('continuous')) {
-      track.applyConstraints({ advanced: [{ focusMode: 'continuous' }] }).catch(() => {});
-    }
+    const avancado = [];
+    if (caps.focusMode && caps.focusMode.includes('continuous')) avancado.push({ focusMode: 'continuous' });
+    if (caps.exposureMode && caps.exposureMode.includes('continuous')) avancado.push({ exposureMode: 'continuous' });
+    if (avancado.length) track.applyConstraints({ advanced: avancado }).catch(() => {});
+
+    montarZoom(caps);
     lanterna = false;
     $('btnLanterna').hidden = !caps.torch;
+    $('btnLanterna').classList.remove('ligado');
+    $('btnTrocar').hidden = cameras.length < 2;
     $('ligarCam').hidden = true;
     $('camMsg').textContent = '';
     $('camMsg').className = 'nota';
-    try { if (navigator.wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
+    try { if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     candidato = null; repeticoes = 0;
-    if (!lendo) { lendo = true; cicloLeitura(); }
+    if (!lendo) { lendo = true; proximoQuadro(); }
   } catch (e) {
-    $('camMsg').className = 'nota erro';
-    $('camMsg').textContent = 'Não foi possível abrir a câmera. Verifique se o app tem permissão de câmera. (' + e.message + ')';
+    aviso('Não foi possível abrir a câmera. Verifique se o app tem permissão de câmera. (' + e.message + ')');
   }
+}
+
+async function montarZoom(caps) {
+  const caixa = $('zoomBox');
+  caixa.innerHTML = '';
+  if (!caps.zoom || !(caps.zoom.max > caps.zoom.min)) { caixa.hidden = true; return; }
+  const niveis = [1, 2, 3, 4].filter(z => z >= caps.zoom.min && z <= caps.zoom.max);
+  if (niveis.length < 2) { caixa.hidden = true; return; }
+  const salvo = Number(await kvLer('zoom')) || 2;
+  const inicial = niveis.includes(salvo) ? salvo : niveis[Math.min(1, niveis.length - 1)];
+  const aplicar = z => {
+    track.applyConstraints({ advanced: [{ zoom: z }] }).catch(() => {});
+    caixa.querySelectorAll('button').forEach(b => b.classList.toggle('ligado', Number(b.dataset.z) === z));
+  };
+  for (const z of niveis) {
+    const b = document.createElement('button');
+    b.textContent = z + 'x';
+    b.dataset.z = z;
+    b.addEventListener('click', () => { aplicar(z); kvGravar('zoom', z); });
+    caixa.appendChild(b);
+  }
+  caixa.hidden = false;
+  aplicar(inicial);
 }
 
 function pararCamera() {
@@ -511,6 +585,8 @@ function pararCamera() {
   if (track) { try { track.stop(); } catch (e) {} track = null; }
   $('video').srcObject = null;
   $('btnLanterna').hidden = true;
+  $('btnTrocar').hidden = true;
+  $('zoomBox').hidden = true;
   $('ligarCam').hidden = false;
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
@@ -518,18 +594,54 @@ function pararCamera() {
 $('btnLanterna').addEventListener('click', () => {
   if (!track) return;
   lanterna = !lanterna;
+  $('btnLanterna').classList.toggle('ligado', lanterna);
   track.applyConstraints({ advanced: [{ torch: lanterna }] }).catch(() => {});
 });
 
-async function cicloLeitura() {
+$('btnTrocar').addEventListener('click', async () => {
+  if (cameras.length < 2) return;
+  const atual = track ? track.getSettings().deviceId : cameraId;
+  const i = cameras.findIndex(d => d.deviceId === atual);
+  const proxima = cameras[(i + 1) % cameras.length];
+  await kvGravar('cameraId', proxima.deviceId);
+  ligarCamera(proxima.deviceId);
+});
+
+function proximoQuadro() {
+  const v = $('video');
+  if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(() => analisarQuadro());
+  else setTimeout(analisarQuadro, 50);
+}
+
+// Recorta do vídeo a área que aparece dentro da mira (o vídeo é cortado para preencher a caixa).
+function regiaoDaMira(v) {
+  const vw = v.videoWidth, vh = v.videoHeight, bw = v.clientWidth, bh = v.clientHeight;
+  if (!vw || !vh || !bw || !bh) return null;
+  const escala = Math.max(bw / vw, bh / vh);
+  const visW = bw / escala, visH = bh / escala;
+  const x = (vw - visW) / 2 + visW * 0.03, y = (vh - visH) / 2 + visH * 0.2;
+  return { x: Math.round(x), y: Math.round(y), w: Math.round(visW * 0.94), h: Math.round(visH * 0.6) };
+}
+
+async function analisarQuadro() {
   if (!lendo || !track) { lendo = false; return; }
+  const v = $('video');
   try {
-    const achados = await detector.detect($('video'));
-    const valor = achados.length ? normalizarPatrimonio(achados[0].rawValue) : '';
+    quadro++;
+    let fonte = v;
+    const r = quadro % 3 ? regiaoDaMira(v) : null;   // 2 de cada 3 quadros: só a mira, em resolução cheia
+    if (r) {
+      recorte = recorte || document.createElement('canvas');
+      if (recorte.width !== r.w || recorte.height !== r.h) { recorte.width = r.w; recorte.height = r.h; }
+      recorte.getContext('2d', { alpha: false }).drawImage(v, r.x, r.y, r.w, r.h, 0, 0, r.w, r.h);
+      fonte = recorte;
+    }
+    const achados = await detector.detect(fonte);
+    const validos = achados.map(a => normalizarPatrimonio(a.rawValue)).filter(Boolean);
+    const valor = validos.find(p => base.has(p)) || validos[0] || '';
     if (valor) {
-      // exige o mesmo valor em 2 quadros seguidos, para evitar leitura errada
       if (valor === candidato) repeticoes++; else { candidato = valor; repeticoes = 1; }
-      if (repeticoes >= 2) {
+      if (base.has(valor) || repeticoes >= 2) {
         const agora = Date.now();
         if (valor === ultimoValor && agora - ultimoEm < 3000) {
           ultimoEm = agora;       // mesma plaqueta ainda na frente da câmera
@@ -538,16 +650,70 @@ async function cicloLeitura() {
           await registrar(valor, 'Câmera');
         }
       }
-    } else {
+    } else if (!r) {
       candidato = null; repeticoes = 0;
     }
   } catch (e) {}
-  setTimeout(cicloLeitura, 80);
+  if (lendo) proximoQuadro();
 }
 
 document.addEventListener('visibilitychange', () => {
   if (document.hidden) pararCamera();
 });
+
+// ---------- Envio ao vivo para o painel ----------
+const VIVO_INTERVALO = 15000;
+let vivoPendentes = new Set(), vivoTimer = null, vivoUltimo = 0, vivoEnviando = false;
+
+function vivoMsg(texto) { $('vivoMsg').textContent = texto; }
+
+// Marca a conferência para envio. "ja" envia sem esperar o intervalo.
+function marcarVivo(codigo, ja) {
+  if (!FIREBASE_URL) return;
+  vivoPendentes.add(codigo);
+  kvGravar('vivoPendentes', Array.from(vivoPendentes)).catch(() => {});
+  agendarVivo(ja ? 0 : Math.max(0, VIVO_INTERVALO - (Date.now() - vivoUltimo)));
+}
+
+function agendarVivo(espera) {
+  if (vivoTimer) { if (espera > 0) return; clearTimeout(vivoTimer); }
+  vivoTimer = setTimeout(enviarVivo, espera);
+}
+
+async function enviarVivo() {
+  vivoTimer = null;
+  if (vivoEnviando) { agendarVivo(2000); return; }
+  if (!vivoPendentes.size) return;
+  if (!vivoLigado()) { vivoMsg(''); return; }
+  if (!navigator.onLine) { vivoMsg('Sem internet. O envio ao painel será feito quando o sinal voltar.'); return; }
+  vivoEnviando = true;
+  try {
+    for (const codigo of Array.from(vivoPendentes)) {
+      const c = await confLer(codigo);
+      if (!c) { vivoPendentes.delete(codigo); continue; }
+      const itens = (await leiturasDe(codigo)).map(l =>
+        [l.patrimonio, l.setor, l.usuario, l.primeira, l.ultima, l.qtd, l.origem]);
+      const agora = Date.now();
+      const retrato = {
+        codigo: c.codigo, filial: c.filial, usuario: c.usuario, dispositivo: c.dispositivo,
+        status: c.status, criadaEm: c.criadaEm, finalizadaEm: c.finalizadaEm, enviadaEm: agora, itens
+      };
+      const id = await idVivo(c.codigo, c.dispositivo);
+      await pedirVivo('PUT', 'c/' + id, { t: agora, d: await cifrarVivo(retrato) });
+      await pedirVivo('PUT', 'r/' + id, { t: agora });
+      vivoPendentes.delete(codigo);
+    }
+    vivoUltimo = Date.now();
+    await kvGravar('vivoPendentes', Array.from(vivoPendentes));
+    vivoMsg('Painel atualizado às ' + dataHora(vivoUltimo).slice(11, 16) + '.');
+  } catch (e) {
+    vivoMsg('Não foi possível enviar ao painel agora. O app tenta de novo sozinho.');
+    agendarVivo(30000);
+  } finally {
+    vivoEnviando = false;
+  }
+}
+window.addEventListener('online', () => { if (vivoPendentes.size) agendarVivo(0); });
 
 // ---------- Exportação ----------
 async function montarExcel(codigo) {
@@ -606,6 +772,7 @@ $('btnFinalizar').addEventListener('click', async () => {
   conf.status = 'finalizada';
   conf.finalizadaEm = Date.now();
   await confGravar(conf);
+  marcarVivo(codigo, true);
   pararCamera();
   await exportar(codigo);
   abrirLista('finalizada');
@@ -622,6 +789,9 @@ $('btnPausar').addEventListener('click', irMenu);
     dispositivo = Math.random().toString(36).slice(2, 6).toUpperCase();
     await kvGravar('dispositivo', dispositivo);
   }
+  await carregarVivo();
+  vivoPendentes = new Set((await kvLer('vivoPendentes')) || []);
+  if (vivoPendentes.size) agendarVivo(3000);
   const salva = await kvLer('base');
   baseInfo = await kvLer('baseInfo');
   if (salva && baseInfo) montarBase(salva);

@@ -110,7 +110,9 @@ $('btnEsquecer').addEventListener('click', async () => {
 async function definirSenha(senha) {
   await kvGravar('chaveBase', await chaveDaSenha(senha));
   temSenha = true;
+  await prepararVivo(await kvLer('chaveBase'));
   atualizarPublicacao();
+  buscarVivo();
 }
 
 $('btnGerarSenha').addEventListener('click', async () => {
@@ -270,6 +272,127 @@ async function desenharConferencias() {
     li.addEventListener('click', () => abrir(c.codigo));
     ul.appendChild(li);
   }
+  $('btnGeral').hidden = !todas.length || !selecionada;
+  if (!selecionada) await desenharGeral(todas);
+}
+
+// ---------- Visão geral ----------
+const AGORA_MS = 10 * 60000;   // leitura nos últimos 10 minutos = "lendo agora"
+
+async function desenharGeral(todas) {
+  todas = todas || await confListar();
+  $('detalhe').hidden = true;
+  $('semSelecao').hidden = todas.length > 0;
+  $('geral').hidden = !todas.length;
+  if (!todas.length) return;
+  const linhas = [];
+  for (const c of todas) {
+    const lidos = await leiturasDe(c.codigo);
+    let proprios = 0, transf = 0, nao = 0, ultima = 0;
+    for (const l of lidos) {
+      const b = baseLinhas.length ? basePorNumero.get(l.patrimonio) : (l.cadastrado ? { f: l.filialBase } : null);
+      if (!b) nao++; else if (String(b.f) === String(c.filial)) proprios++; else transf++;
+      if (l.ultima > ultima) ultima = l.ultima;
+    }
+    const total = (basePorFilial.get(String(c.filial)) || []).filter(b => b.p).length;
+    const atividade = Math.max(ultima, c.vivoEm || 0);
+    const noCelular = /^FINALIZADA/.test(semAcento(c.statusColetor));
+    const lendoAgora = c.status !== 'finalizada' && !noCelular && Date.now() - atividade < AGORA_MS;
+    linhas.push({ c, lidos: lidos.length, proprios, transf, nao, total, atividade, lendoAgora, noCelular });
+  }
+  linhas.sort((a, b) => (b.lendoAgora - a.lendoAgora) || (b.atividade - a.atividade));
+  const agora = linhas.filter(l => l.lendoAgora).length;
+  $('geralInfo').textContent = (agora ? agora + (agora === 1 ? ' filial lendo agora. ' : ' filiais lendo agora. ') : 'Nenhuma leitura nos últimos 10 minutos. ') +
+    'Clique em uma linha para abrir.';
+  let html = '<thead><tr><th>Conferência</th><th>Filial</th><th>Situação</th><th>Quem</th><th>Última leitura</th><th>Lidos</th><th>Da filial</th><th>A transferir</th><th>Não cadastrados</th></tr></thead><tbody>';
+  for (const l of linhas) {
+    const sit = l.c.status === 'finalizada' ? '<span class="estado fim">Finalizada no painel</span>' :
+      l.lendoAgora ? '<span class="agora">Lendo agora</span>' :
+      l.noCelular ? 'Finalizada no celular' : 'Em aberto';
+    html += '<tr data-codigo="' + escapar(l.c.codigo) + '"><td>' + escapar(l.c.codigo) + '</td><td class="n">' + escapar(l.c.filial) + '</td><td>' + sit +
+      '</td><td>' + escapar(l.c.usuarios.join(', ')) + '</td><td>' + (l.atividade ? dataHora(l.atividade).slice(0, 16) : '') +
+      '</td><td class="n">' + l.lidos.toLocaleString('pt-BR') + '</td><td class="n">' + l.proprios.toLocaleString('pt-BR') +
+      (l.total ? ' de ' + l.total.toLocaleString('pt-BR') + ' (' + pct(l.proprios, l.total) + ')' : '') +
+      '</td><td class="n">' + l.transf + '</td><td class="n">' + l.nao + '</td></tr>';
+  }
+  $('tabGeral').innerHTML = html + '</tbody>';
+}
+$('tabGeral').addEventListener('click', ev => {
+  const tr = ev.target.closest('tr[data-codigo]');
+  if (tr) abrir(tr.dataset.codigo);
+});
+$('btnGeral').addEventListener('click', () => { selecionada = null; dados = null; desenharConferencias(); });
+
+// ---------- Ao vivo: recebe os retratos enviados pelos celulares ----------
+let vivoBuscando = false;
+
+function vivoInfo(texto, classe) { $('vivoInfo').textContent = texto; $('vivoInfo').className = 'info ' + (classe || ''); }
+
+async function aplicarRetrato(s, id) {
+  if (!s || typeof s.codigo !== 'string' || !Array.isArray(s.itens)) return false;
+  let c = await confLer(s.codigo);
+  if (c && c.status === 'finalizada') return false;       // finalizada no painel: não recebe mais nada
+  const filial = normalizarFilial(s.filial);
+  if (!c) c = { codigo: s.codigo, filial, status: 'aberta', dispositivos: [], usuarios: [], arquivos: [], importadaEm: Date.now(), fechadaEm: 0, statusColetor: '' };
+  const acrescenta = (lista, v) => { v = String(v || '').trim(); if (v && !lista.includes(v)) lista.push(v); };
+  const disp = String(s.dispositivo || '');
+  acrescenta(c.dispositivos, disp);
+  acrescenta(c.usuarios, s.usuario);
+  c.remotos = c.remotos || [];
+  acrescenta(c.remotos, id);
+  c.statusColetor = s.status === 'finalizada' ? 'Finalizada' : 'Em andamento';
+  c.vivoEm = Number(s.enviadaEm) || Date.now();
+
+  const atuais = new Map((await leiturasDe(s.codigo)).map(l => [l.patrimonio, l]));
+  const noRetrato = new Set(), gravar = [], apagar = [];
+  for (const it of s.itens) {
+    const p = normalizarPatrimonio(it[0]);
+    if (!p) continue;
+    noRetrato.add(p);
+    const b = basePorNumero.get(p);
+    const l = {
+      codigo: s.codigo, patrimonio: p, descricao: b ? b.d : '', filialBase: b ? b.f : '', filialAtual: filial,
+      cadastrado: !!b, setor: String(it[1] || ''), usuario: String(it[2] || ''),
+      primeira: Number(it[3]) || 0, ultima: Number(it[4]) || 0, qtd: Number(it[5]) || 1, origem: String(it[6] || ''), disp
+    };
+    const antiga = atuais.get(p);
+    if (antiga && antiga.disp !== disp) juntarLeituras(l, antiga);   // veio também de outro aparelho ou de arquivo
+    gravar.push(l);
+  }
+  // item removido no celular some daqui também (só os que vieram deste mesmo aparelho)
+  for (const [p, l] of atuais) if (l.disp === disp && !noRetrato.has(p)) apagar.push([s.codigo, p]);
+  await leiturasLote(gravar, apagar);
+  await confGravar(c);
+  return true;
+}
+
+async function buscarVivo() {
+  if (vivoBuscando || document.hidden) return;
+  if (!FIREBASE_URL) { vivoInfo(''); return; }
+  if (!chaveVivoAtual) { vivoInfo('Ao vivo: defina a senha da base em "Enviar base aos celulares".', 'aviso'); return; }
+  vivoBuscando = true;
+  try {
+    const indice = (await pedirVivo('GET', 'r')) || {};
+    const vistos = (await kvLer('vivoVistos')) || {};
+    let mudou = false;
+    for (const id of Object.keys(indice)) {
+      const t = indice[id] && indice[id].t;
+      if (!/^[0-9a-f]{32}$/.test(id) || typeof t !== 'number' || vistos[id] === t) continue;
+      try {
+        const reg = await pedirVivo('GET', 'c/' + id);
+        if (reg && typeof reg.d === 'string' && await aplicarRetrato(await decifrarVivo(reg.d), id)) mudou = true;
+      } catch (e) { /* não abre com a nossa senha: ignora */ }
+      vistos[id] = t;
+    }
+    await kvGravar('vivoVistos', vistos);
+    vivoInfo('Ao vivo ligado. Última consulta às ' + dataHora(Date.now()).slice(11, 19) + '.', 'bom');
+    if (mudou) { await desenharConferencias(); if (selecionada) await abrir(selecionada); }
+    else if (!selecionada) await desenharGeral();
+  } catch (e) {
+    vivoInfo('Ao vivo: sem conexão com o banco (' + e.message + ').', 'erro');
+  } finally {
+    vivoBuscando = false;
+  }
 }
 
 // ---------- Cruzamento ----------
@@ -353,9 +476,10 @@ function linhasResumo(d) {
 async function abrir(codigo) {
   selecionada = codigo;
   dados = await cruzar(codigo);
-  if (!dados.conf) { selecionada = null; $('detalhe').hidden = true; $('semSelecao').hidden = false; return; }
+  if (!dados.conf) { selecionada = null; dados = null; return desenharConferencias(); }
   const c = dados.conf;
   $('semSelecao').hidden = true;
+  $('geral').hidden = true;
   $('detalhe').hidden = false;
   $('detTitulo').textContent = c.codigo;
   $('detInfo').textContent = 'Filial ' + c.filial + '. ' +
@@ -438,10 +562,14 @@ $('btnStatus').addEventListener('click', async () => {
 
 $('btnExcluir').addEventListener('click', async () => {
   if (!confirm('Excluir a conferência ' + selecionada + ' e todas as leituras dela deste painel?')) return;
+  const c = await confLer(selecionada);
+  if (vivoLigado() && c && c.remotos) {
+    for (const id of c.remotos) {
+      try { await pedirVivo('DELETE', 'c/' + id); await pedirVivo('DELETE', 'r/' + id); } catch (e) {}
+    }
+  }
   await apagarConferencia(selecionada);
   selecionada = null; dados = null;
-  $('detalhe').hidden = true;
-  $('semSelecao').hidden = false;
   desenharConferencias();
 });
 
@@ -455,6 +583,10 @@ $('btnExcluir').addEventListener('click', async () => {
   if (salva && baseInfo) montarBase(salva);
   temSenha = !!(await kvLer('chaveBase'));
   tokenSalvo = (await kvLer('token')) || '';
+  await carregarVivo();
   mostrarBaseInfo();
-  desenharConferencias();
+  await desenharConferencias();
+  buscarVivo();
+  setInterval(buscarVivo, 15000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) buscarVivo(); });
 })();
