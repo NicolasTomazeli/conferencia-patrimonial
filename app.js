@@ -46,6 +46,7 @@ async function irMenu() {
   atualizarInstalar();
   mostrar('telaMenu');
   verificarBase(false);
+  atualizarCadastro().catch(() => {});
 }
 
 // ---------- Instalação ----------
@@ -183,6 +184,7 @@ async function baixarBase(meta, chave) {
   await kvGravar('base', Array.from(base, ([p, v]) => [p, v[0], v[1]]));
   await kvGravar('baseInfo', baseInfo);
   await prepararVivo(chave);
+  atualizarCadastro().catch(() => {});
   if (vivoPendentes.size) agendarVivo(0);
   metaPendente = null;
   $('senhaBox').hidden = true;
@@ -217,6 +219,20 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !$('telaMenu').hidden) verificarBase(false);
 });
 
+// ---------- Cadastro de regionais e usuários (publicado pelo painel) ----------
+let cadastro = null;
+
+async function atualizarCadastro() {
+  if (!vivoLigado() || !navigator.onLine) return;
+  const reg = await pedirVivo('GET', 'cad');
+  if (!reg || typeof reg.d !== 'string') return;
+  const novo = await decifrarVivo(reg.d);
+  if (novo && (!cadastro || (novo.v || 0) >= (cadastro.v || 0))) {
+    cadastro = novo;
+    await kvGravar('cadastro', cadastro);
+  }
+}
+
 // ---------- Nova conferência ----------
 $('btnNova').addEventListener('click', async () => {
   $('novaFilial').value = '';
@@ -230,10 +246,13 @@ $('btnNova').addEventListener('click', async () => {
 $('novaFilial').addEventListener('input', () => {
   const f = normalizarFilial($('novaFilial').value);
   const n = totalPorFilial.get(f);
+  const { regional, responsavel } = responsavelDaFilial(cadastro, f);
   $('novaFilialInfo').textContent = !f ? '' :
-    n ? 'Filial ' + f + ': ' + n.toLocaleString('pt-BR') + ' ativos com plaqueta na base.' :
-    'Atenção: a base não tem ativos nesta filial.';
+    (n ? 'Filial ' + f + ': ' + n.toLocaleString('pt-BR') + ' ativos com plaqueta na base.' : 'Atenção: a base não tem ativos nesta filial.') +
+    (regional ? ' Regional ' + regional + '. ' + (responsavel ? 'Aceite final com ' + responsavel.nome + '.' : 'Sem responsável cadastrado para o aceite.') : '');
   $('novaFilialInfo').className = 'info' + (f && !n ? ' aviso' : '');
+  const nomes = ((cadastro && cadastro.usuarios) || []).filter(u => regional && u.regional === regional).map(u => u.nome);
+  $('listaOperadores').innerHTML = nomes.map(x => '<option value="' + escapar(x) + '">').join('');
 });
 
 $('btnCriar').addEventListener('click', async () => {
@@ -325,7 +344,8 @@ async function abrirLista(status) {
     const qtd = (await leiturasDe(c.codigo)).length;
     const li = document.createElement('li');
     li.innerHTML = '<div class="txt"><div class="t1">' + escapar(c.codigo) + '</div><div class="t2">Filial ' +
-      escapar(c.filial) + ', ' + qtd + ' itens, ' + dataHora(status === 'aberta' ? c.criadaEm : c.finalizadaEm).slice(0, 16) + '</div></div>';
+      escapar(c.filial) + ', ' + qtd + ' itens, ' + dataHora(status === 'aberta' ? c.criadaEm : c.finalizadaEm).slice(0, 16) +
+      (c.aprovacao ? (c.aprovacao.id ? '. Aceite pedido a ' + escapar(c.aprovacao.nome) : '. Sem responsável para o aceite') : '') + '</div></div>';
     const b = document.createElement('button');
     b.className = 'mini' + (status === 'aberta' ? '' : ' sec');
     b.textContent = status === 'aberta' ? 'Abrir' : 'Enviar';
@@ -838,12 +858,14 @@ async function enviarVivo() {
     for (const codigo of Array.from(vivoPendentes)) {
       const c = await confLer(codigo);
       if (!c) { vivoPendentes.delete(codigo); continue; }
+      if (c.status === 'finalizada') await pedirAceite(c);
       const itens = (await leiturasDe(codigo)).map(l =>
         [l.patrimonio, l.setor, l.usuario, l.primeira, l.ultima, l.qtd, l.origem]);
       const agora = Date.now();
       const retrato = {
         codigo: c.codigo, filial: c.filial, usuario: c.usuario, dispositivo: c.dispositivo,
-        status: c.status, criadaEm: c.criadaEm, finalizadaEm: c.finalizadaEm, enviadaEm: agora, itens
+        status: c.status, criadaEm: c.criadaEm, finalizadaEm: c.finalizadaEm, enviadaEm: agora, itens,
+        aprovacao: c.aprovacao || null
       };
       const id = await idVivo(c.codigo, c.dispositivo);
       await pedirVivo('PUT', 'c/' + id, { t: agora, d: await cifrarVivo(retrato) });
@@ -861,6 +883,32 @@ async function enviarVivo() {
   }
 }
 window.addEventListener('online', () => { if (vivoPendentes.size) agendarVivo(0); });
+
+// Cria o pedido de aceite da conferência finalizada e dispara o e-mail para o responsável da regional.
+async function pedirAceite(c) {
+  if (!c.aprovacao) {
+    await atualizarCadastro().catch(() => {});
+    const { regional, responsavel } = responsavelDaFilial(cadastro, c.filial);
+    if (!responsavel) {
+      c.aprovacao = { semResponsavel: true, regional, em: Date.now() };
+      await confGravar(c);
+      return;
+    }
+    const ativos = [];
+    for (const [p, v] of base) if (String(v[1]) === String(c.filial)) ativos.push([p, v[0]]);
+    const pacote = montarPacoteConferencia({
+      conf: c, itens: await leiturasDe(c.codigo), descricao: p => base.get(p) || null, ativosFilial: ativos,
+      responsavel, regional, operador: c.usuario, nomeFilial: ((cadastro && cadastro.nomes) || {})[c.filial] || ''
+    });
+    c.aprovacao = await criarAprovacao(pacote);
+    await confGravar(c);
+  }
+  if (c.aprovacao.id && !c.aprovacao.enviadoEm && EMAIL_URL) {
+    await enviarEmailAceite(c.aprovacao);
+    c.aprovacao.enviadoEm = Date.now();
+    await confGravar(c);
+  }
+}
 
 // ---------- Exportação ----------
 async function montarExcel(codigo) {
@@ -937,6 +985,8 @@ $('btnPausar').addEventListener('click', irMenu);
     await kvGravar('dispositivo', dispositivo);
   }
   await carregarVivo();
+  cadastro = (await kvLer('cadastro')) || null;
+  atualizarCadastro().catch(() => {});
   vivoPendentes = new Set((await kvLer('vivoPendentes')) || []);
   if (vivoPendentes.size) agendarVivo(3000);
   const salva = await kvLer('base');

@@ -256,9 +256,9 @@ $('arqModelo').addEventListener('change', async ev => {
 });
 
 // Agrupa os itens a transferir pela filial de origem (a filial onde o bem está cadastrado).
-function gruposDeTransferencia() {
+function gruposDeTransferencia(d = dados) {
   const grupos = new Map();
-  for (const l of dados.transferir) {
+  for (const l of d.transferir) {
     const origem = String(l.filialBase);
     if (!grupos.has(origem)) grupos.set(origem, []);
     grupos.get(origem).push(l);
@@ -355,21 +355,21 @@ $('btnTermoImprimir').addEventListener('click', async () => {
   document.title = 'Painel · Conferência Patrimonial';
 });
 
-$('btnTermoCsv').addEventListener('click', () => {
+function csvTransferencias(d) {
   const sep = ';';
   const campo = v => { v = String(v == null ? '' : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
   const linhas = [['Conferencia', 'Patrimonio', 'Codigo do Bem', 'Descricao', 'Filial Origem', 'Filial Destino', 'Data Aquisicao', 'Valor Base', 'Setor', 'Lido em']];
-  for (const [origem, itens] of gruposDeTransferencia()) {
+  for (const [origem, itens] of gruposDeTransferencia(d)) {
     for (const l of itens) {
       const b = basePorNumero.get(l.patrimonio);
-      linhas.push([dados.conf.codigo, l.patrimonio, b && b.cb != null ? b.cb : '', l.descricao, origem, dados.conf.filial,
+      linhas.push([d.conf.codigo, l.patrimonio, b && b.cb != null ? b.cb : '', l.descricao, origem, d.conf.filial,
         b ? dataExcel(b.dt) : '', b && typeof b.v === 'number' ? String(b.v).replace('.', ',') : '', l.setor, dataHora(l.ultima)]);
     }
   }
   // o BOM no início faz o Excel abrir os acentos corretamente
-  baixarArquivo(new Blob(['﻿' + linhas.map(r => r.map(campo).join(sep)).join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }),
-    'Transferencias_' + dados.conf.codigo + '.csv');
-});
+  return new Blob(['﻿' + linhas.map(r => r.map(campo).join(sep)).join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' });
+}
+$('btnTermoCsv').addEventListener('click', () => baixarArquivo(csvTransferencias(dados), 'Transferencias_' + dados.conf.codigo + '.csv'));
 
 // ---------- Importação ----------
 $('arqConf').addEventListener('change', async ev => {
@@ -471,13 +471,13 @@ async function desenharGeral(todas) {
   const agora = linhas.filter(l => l.lendoAgora).length;
   $('geralInfo').textContent = (agora ? agora + (agora === 1 ? ' filial lendo agora. ' : ' filiais lendo agora. ') : 'Nenhuma leitura nos últimos 10 minutos. ') +
     'Clique em uma linha para abrir.';
-  let html = '<thead><tr><th>Conferência</th><th>Filial</th><th>Situação</th><th>Quem</th><th>Última leitura</th><th>Lidos</th><th>Da filial</th><th>A transferir</th><th>Não cadastrados</th></tr></thead><tbody>';
+  let html = '<thead><tr><th>Conferência</th><th>Filial</th><th>Situação</th><th>Aceite</th><th>Quem</th><th>Última leitura</th><th>Lidos</th><th>Da filial</th><th>A transferir</th><th>Não cadastrados</th></tr></thead><tbody>';
   for (const l of linhas) {
     const sit = l.c.status === 'finalizada' ? '<span class="estado fim">Finalizada no painel</span>' :
       l.lendoAgora ? '<span class="agora">Lendo agora</span>' :
       l.noCelular ? 'Finalizada no celular' : 'Em aberto';
     html += '<tr data-codigo="' + escapar(l.c.codigo) + '"><td>' + escapar(l.c.codigo) + '</td><td class="n">' + escapar(l.c.filial) + (nomeFilial(l.c.filial) ? ' <small>' + escapar(nomeFilial(l.c.filial)) + '</small>' : '') + '</td><td>' + sit +
-      '</td><td>' + escapar(l.c.usuarios.join(', ')) + '</td><td>' + (l.atividade ? dataHora(l.atividade).slice(0, 16) : '') +
+      '</td><td>' + situacaoAceite(l.c) + '</td><td>' + escapar(l.c.usuarios.join(', ')) + '</td><td>' + (l.atividade ? dataHora(l.atividade).slice(0, 16) : '') +
       '</td><td class="n">' + l.lidos.toLocaleString('pt-BR') + '</td><td class="n">' + l.proprios.toLocaleString('pt-BR') +
       (l.total ? ' de ' + l.total.toLocaleString('pt-BR') + ' (' + pct(l.proprios, l.total) + ')' : '') +
       '</td><td class="n">' + l.transf + '</td><td class="n">' + l.nao + '</td></tr>';
@@ -509,6 +509,10 @@ async function aplicarRetrato(s, id) {
   acrescenta(c.remotos, id);
   c.statusColetor = s.status === 'finalizada' ? 'Finalizada' : 'Em andamento';
   c.vivoEm = Number(s.enviadaEm) || Date.now();
+  const ap = s.aprovacao;
+  if (ap && ap.id && !(c.aprovacao && c.aprovacao.id)) c.aprovacao = ap;
+  else if (ap && ap.id && c.aprovacao.id === ap.id) c.aprovacao.enviadoEm = Math.max(c.aprovacao.enviadoEm || 0, ap.enviadoEm || 0);
+  else if (ap && ap.semResponsavel && !c.aprovacao) c.aprovacao = ap;
 
   const atuais = new Map((await leiturasDe(s.codigo)).map(l => [l.patrimonio, l]));
   const noRetrato = new Set(), gravar = [], apagar = [];
@@ -552,6 +556,7 @@ async function buscarVivo() {
       vistos[id] = t;
     }
     await kvGravar('vivoVistos', vistos);
+    if (await verificarAceites()) mudou = true;
     vivoInfo('Ao vivo ligado. Última consulta às ' + dataHora(Date.now()).slice(11, 19) + '.', 'bom');
     if (mudou) { await desenharConferencias(); if (selecionada) await abrir(selecionada); }
     else if (!selecionada) await desenharGeral();
@@ -561,6 +566,349 @@ async function buscarVivo() {
     vivoBuscando = false;
   }
 }
+
+// ---------- Aceite do responsável ----------
+function situacaoAceite(c) {
+  const dec = c.decisao, ap = c.aprovacao;
+  if (dec && dec.decisao === 'aceite') return '<span class="estado fim">Aceita</span>';
+  if (dec) return '<span class="estado">Recusada</span>';
+  if (ap && ap.id) return 'Aguardando ' + escapar(String(ap.nome || '').split(' ')[0]);
+  if (ap && ap.semResponsavel) return '<span class="erro">Sem responsável</span>';
+  return '';
+}
+
+function mostrarAceite(c) {
+  const ap = c.aprovacao, dec = c.decisao;
+  const finalizadaNoCelular = /^FINALIZADA/.test(semAcento(c.statusColetor));
+  let texto = '', classe = '', botao = 'Enviar para aceite', mostra = finalizadaNoCelular && !c.arquivadoEm;
+  if (dec && dec.decisao === 'aceite') {
+    texto = 'Aceita por ' + dec.nome + ' (' + dec.email + ') em ' + dataHora(dec.em) + '.' +
+      (dec.confere === false ? ' Atenção: o conteúdo aceito não confere com o que foi enviado.' : '') +
+      (c.arquivadoEm ? ' Arquivos gravados em ' + c.pastaArquivo + '.' :
+        c.arquivoErro ? ' ' + c.arquivoErro : ' Os arquivos serão gravados assim que a pasta estiver conectada, na aba Acessos.');
+    classe = c.arquivoErro || dec.confere === false ? 'aviso' : 'bom';
+    mostra = false;
+  } else if (dec) {
+    texto = 'Recusada por ' + dec.nome + ' (' + dec.email + ') em ' + dataHora(dec.em) + '. Motivo: ' + dec.motivo;
+    classe = 'aviso';
+    botao = 'Enviar novo pedido de aceite';
+  } else if (ap && ap.id) {
+    texto = 'Aguardando o aceite de ' + ap.nome + ' (' + ap.para + '). ' +
+      (ap.enviadoEm ? 'E-mail enviado em ' + dataHora(ap.enviadoEm).slice(0, 16) + '.' : 'O e-mail ainda não saiu.');
+    botao = 'Reenviar e-mail';
+  } else if (ap && ap.semResponsavel) {
+    texto = 'Finalizada sem pedido de aceite: ' + (ap.regional ? 'a regional ' + ap.regional : 'a regional desta filial') +
+      ' não tinha responsável cadastrado. Cadastre em Acessos e clique em "Enviar para aceite".';
+    classe = 'aviso';
+  } else if (finalizadaNoCelular) {
+    texto = 'Ainda sem pedido de aceite.';
+  }
+  $('aceiteInfo').className = 'nota ' + classe;
+  $('aceiteInfo').textContent = texto;
+  $('btnAceite').hidden = !mostra;
+  $('btnAceite').textContent = botao;
+}
+
+$('btnAceite').addEventListener('click', async () => {
+  const c = await confLer(selecionada);
+  const aviso = (t, cl) => { $('aceiteInfo').className = 'nota ' + (cl || ''); $('aceiteInfo').textContent = t; };
+  if (!vivoLigado()) return aviso('Defina a senha da base em "Enviar base aos celulares" para criar pedidos de aceite.', 'erro');
+  $('btnAceite').disabled = true;
+  try {
+    if (!(c.aprovacao && c.aprovacao.id) || c.decisao) {
+      const { regional, responsavel } = responsavelDaFilial(cadastroAtual(), c.filial);
+      if (!responsavel) {
+        aviso(regional ? 'A regional ' + regional + ' não tem responsável. Cadastre em Acessos.' :
+          'A filial ' + c.filial + ' não está em nenhuma regional da pasta. Confira em Acessos.', 'erro');
+        return;
+      }
+      const d = await cruzar(c.codigo);
+      const pacote = montarPacoteConferencia({
+        conf: c, itens: d.lidos, regional, responsavel, operador: c.usuarios.join(', '), nomeFilial: nomeFilial(c.filial),
+        descricao: p => { const b = basePorNumero.get(p); return b ? [b.d, b.f] : null; },
+        ativosFilial: (basePorFilial.get(String(c.filial)) || []).filter(b => b.p).map(b => [b.p, b.d])
+      });
+      c.aprovacao = await criarAprovacao(pacote);
+      delete c.decisao;
+      await confGravar(c);
+    }
+    await enviarEmailAceite(c.aprovacao);
+    c.aprovacao.enviadoEm = Date.now();
+    await confGravar(c);
+    await abrir(c.codigo);
+  } catch (e) {
+    aviso('Não foi possível enviar: ' + e.message + '.', 'erro');
+  } finally {
+    $('btnAceite').disabled = false;
+  }
+});
+
+// Procura decisões novas dos responsáveis e grava os arquivos das conferências aceitas.
+async function verificarAceites() {
+  let mudou = false;
+  const podeGravar = await pastaPermitida(false);
+  for (const c of await confListar()) {
+    const ap = c.aprovacao;
+    if (!ap || !ap.id) continue;
+    if (!c.decisao) {
+      try {
+        const reg = await pedirVivo('GET', 's/' + ap.id);
+        if (!reg || typeof reg.d !== 'string') continue;
+        c.decisao = await decifrarCom(await chaveAprovacao(ap.chave), reg.d);
+        c.decisao.confere = c.decisao.hashPacote === ap.hash;
+        await confGravar(c);
+        mudou = true;
+      } catch (e) { continue; }
+    }
+    if (c.decisao.decisao === 'aceite' && !c.arquivadoEm && podeGravar && await arquivar(c.codigo)) mudou = true;
+  }
+  return mudou;
+}
+
+function comprovanteBlob(c) {
+  const dec = c.decisao, ap = c.aprovacao;
+  const linhas = [
+    'COMPROVANTE DE ACEITE ELETRÔNICO',
+    '',
+    'Conferência: ' + c.codigo,
+    'Filial: ' + c.filial + (nomeFilial(c.filial) ? ' - ' + nomeFilial(c.filial) : ''),
+    'Regional: ' + (ap.regional || ''),
+    'Decisão: ' + (dec.decisao === 'aceite' ? 'ACEITE' : 'RECUSA'),
+    dec.motivo ? 'Motivo: ' + dec.motivo : null,
+    'Nome informado: ' + dec.nome,
+    'E-mail do pedido: ' + dec.email,
+    'Data e hora da decisão: ' + dataHora(dec.em) + (dec.fuso ? ' (' + dec.fuso + ')' : ''),
+    'Pedido criado em: ' + dataHora(ap.criadoEm),
+    'E-mail enviado em: ' + (ap.enviadoEm ? dataHora(ap.enviadoEm) : 'não registrado'),
+    'Identificador do pedido: ' + ap.id,
+    'Código de verificação do conteúdo (SHA-256): ' + ap.hash,
+    'Conteúdo aceito confere com o enviado: ' + (dec.confere ? 'sim' : 'NÃO'),
+    'Navegador usado: ' + dec.agente,
+    '',
+    'Aceite registrado pelo link pessoal enviado ao e-mail acima. Não equivale a assinatura com certificado digital.'
+  ].filter(x => x !== null);
+  return new Blob(['﻿' + linhas.join('\r\n') + '\r\n'], { type: 'text/plain;charset=utf-8' });
+}
+
+async function gravarArquivo(dir, nome, blob) {
+  const arq = await dir.getFileHandle(nome, { create: true });
+  const w = await arq.createWritable();
+  await w.write(blob);
+  await w.close();
+}
+
+async function arquivar(codigo) {
+  const c = await confLer(codigo);
+  const destino = estrutura.filiais[String(c.filial)];
+  if (!destino) {
+    c.arquivoErro = 'A filial ' + c.filial + ' não tem pasta em nenhuma regional. Crie a pasta e clique em "Reler a pasta" na aba Acessos.';
+    await confGravar(c);
+    return false;
+  }
+  try {
+    const d = await cruzar(codigo);
+    let dir = await (await pastaHandle.getDirectoryHandle(destino.regional)).getDirectoryHandle(destino.pasta);
+    dir = await (await dir.getDirectoryHandle(PASTA_TIPO.conferencia, { create: true })).getDirectoryHandle(codigo, { create: true });
+    await gravarArquivo(dir, 'Relatorio_' + codigo + '.xlsx', relatorioBlob(d));
+    await gravarArquivo(dir, 'Localizados_' + codigo + '.xlsx', planilhaUmaAba('localizados', d));
+    await gravarArquivo(dir, 'Nao_localizados_' + codigo + '.xlsx', planilhaUmaAba('aLocalizar', d));
+    if (d.transferir.length) await gravarArquivo(dir, 'Transferencias_' + codigo + '.csv', csvTransferencias(d));
+    await gravarArquivo(dir, 'Comprovante_aceite_' + codigo + '.txt', comprovanteBlob(c));
+    c.arquivadoEm = Date.now();
+    c.pastaArquivo = [destino.regional, destino.pasta, PASTA_TIPO.conferencia, codigo].join('\\');
+    c.status = 'finalizada';
+    c.fechadaEm = c.fechadaEm || Date.now();
+    delete c.arquivoErro;
+    await confGravar(c);
+    return true;
+  } catch (e) {
+    c.arquivoErro = 'Não foi possível gravar na pasta (' + e.message + ').';
+    await confGravar(c);
+    return false;
+  }
+}
+
+// ---------- Aba Acessos: pasta, regionais e usuários ----------
+let pastaHandle = null;
+let estrutura = { filiais: {}, regionais: {}, lidaEm: 0 };   // filial -> { regional, pasta }
+let usuarios = [];
+let editandoId = null;
+
+function cadastroAtual() {
+  const filialRegional = {};
+  for (const [f, x] of Object.entries(estrutura.filiais)) filialRegional[f] = x.regional;
+  const nomes = {};
+  for (const [f, x] of filiais) nomes[f] = x.local + '/' + x.uf;
+  return { v: Date.now(), filialRegional, nomes, usuarios: usuarios.map(u => ({ nome: u.nome, email: u.email, perfil: u.perfil, regional: u.regional })) };
+}
+
+async function publicarCadastro() {
+  const msg = (t, c) => { $('acessosMsg').className = 'nota ' + (c || ''); $('acessosMsg').textContent = t; };
+  if (!FIREBASE_URL) return msg('');
+  if (!vivoLigado()) return msg('Defina a senha da base (aba Conferências, "Enviar base aos celulares") para os celulares receberem este cadastro.', 'aviso');
+  try {
+    await pedirVivo('PUT', 'cad', { t: Date.now(), d: await cifrarVivo(cadastroAtual()) });
+    msg('Cadastro enviado aos celulares às ' + dataHora(Date.now()).slice(11, 16) + '.', 'bom');
+  } catch (e) {
+    msg('Não foi possível enviar o cadastro aos celulares (' + e.message + ').', 'erro');
+  }
+}
+
+async function pastaPermitida(pedir) {
+  if (!pastaHandle) return false;
+  if (!pastaHandle.queryPermission) return true;
+  const modo = { mode: 'readwrite' };
+  let s = await pastaHandle.queryPermission(modo);
+  if (s !== 'granted' && pedir) s = await pastaHandle.requestPermission(modo);
+  return s === 'granted';
+}
+
+// A pasta escolhida tem uma subpasta por regional, e dentro dela uma subpasta por filial (o número).
+async function lerEstrutura() {
+  const nova = { filiais: {}, regionais: {}, lidaEm: Date.now() };
+  const repetidas = [];
+  for await (const [nome, h] of pastaHandle.entries()) {
+    if (h.kind !== 'directory' || /^[._~$]/.test(nome) || /^\d+$/.test(nome)) continue;
+    nova.regionais[nome] = [];
+    for await (const [sub, hs] of h.entries()) {
+      const f = hs.kind === 'directory' ? normalizarFilial(sub) : '';
+      if (!f) continue;
+      if (nova.filiais[f]) repetidas.push(f);
+      nova.filiais[f] = { regional: nome, pasta: sub };
+      nova.regionais[nome].push(f);
+    }
+    nova.regionais[nome].sort((a, b) => a - b);
+  }
+  estrutura = nova;
+  await kvGravar('estrutura', estrutura);
+  return repetidas;
+}
+
+async function mostrarPasta() {
+  const ok = await pastaPermitida(false);
+  const nReg = Object.keys(estrutura.regionais).length, nFil = Object.keys(estrutura.filiais).length;
+  $('pastaInfo').textContent = !pastaHandle ? 'Escolha a pasta "01 - Controle de Ativos" no R:. O painel lê dela as regionais e filiais, e grava ali os arquivos das conferências aceitas.' :
+    'Pasta "' + pastaHandle.name + '": ' + nReg + ' regionais e ' + nFil + ' filiais, lida em ' + dataHora(estrutura.lidaEm).slice(0, 16) + '.' +
+    (ok ? '' : ' O navegador pede autorização de novo a cada vez que o painel é aberto: clique em "Reconectar".');
+  $('btnPasta').textContent = pastaHandle ? (ok ? 'Reler a pasta' : 'Escolher outra pasta') : 'Escolher pasta';
+  $('btnPastaReconectar').hidden = !pastaHandle || ok;
+}
+
+$('btnPasta').addEventListener('click', async () => {
+  const msg = (t, c) => { $('pastaMsg').className = 'nota ' + (c || ''); $('pastaMsg').textContent = t; };
+  try {
+    if (!(pastaHandle && await pastaPermitida(false))) {
+      if (!window.showDirectoryPicker) return msg('Este navegador não grava em pastas. Use o Edge ou o Chrome no computador.', 'erro');
+      pastaHandle = await window.showDirectoryPicker({ id: 'controle-ativos', mode: 'readwrite' });
+      await kvGravar('pasta', pastaHandle);
+    }
+    const repetidas = await lerEstrutura();
+    msg(repetidas.length ? 'Atenção: estas filiais aparecem em mais de uma regional: ' + repetidas.join(', ') + '. Vale a última encontrada.' : '', repetidas.length ? 'aviso' : '');
+    await desenharAcessos();
+    await publicarCadastro();
+    if (await verificarAceites()) await desenharConferencias();
+  } catch (e) {
+    if (e.name !== 'AbortError') msg('Não foi possível abrir a pasta (' + e.message + ').', 'erro');
+  }
+});
+
+$('btnPastaReconectar').addEventListener('click', async () => {
+  if (await pastaPermitida(true)) {
+    await lerEstrutura().catch(() => {});
+    await desenharAcessos();
+    if (await verificarAceites()) await desenharConferencias();
+  }
+});
+
+function preencherRegionais() {
+  const atual = $('uRegional').value;
+  const nomes = Object.keys(estrutura.regionais).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  $('uRegional').innerHTML = nomes.length ? nomes.map(n => '<option>' + escapar(n) + '</option>').join('') : '<option value="">Escolha a pasta primeiro</option>';
+  if (nomes.includes(atual)) $('uRegional').value = atual;
+}
+
+async function desenharAcessos() {
+  await mostrarPasta();
+  preencherRegionais();
+  const nomes = Object.keys(estrutura.regionais).sort((a, b) => a.localeCompare(b, 'pt-BR'));
+  const semPasta = Array.from(basePorFilial.keys()).filter(f => !estrutura.filiais[f]).sort((a, b) => a - b);
+  $('acessosInfo').textContent = !nomes.length ? 'As regionais aparecem aqui depois que a pasta é escolhida.' :
+    nomes.length + ' regionais. ' + (semPasta.length ? semPasta.length + ' filiais da base ainda não têm pasta: ' + semPasta.slice(0, 15).join(', ') + (semPasta.length > 15 ? '...' : '') + '.' : 'Todas as filiais da base têm pasta.');
+  let html = '<thead><tr><th>Regional</th><th>Filiais</th><th>Responsável pelo aceite</th><th>Operadores</th></tr></thead><tbody>';
+  for (const n of nomes) {
+    const resp = usuarios.find(u => u.perfil === 'Responsável' && u.regional === n);
+    const ops = usuarios.filter(u => u.perfil === 'Operador' && u.regional === n);
+    html += '<tr><td>' + escapar(n) + '</td><td class="larga">' + estrutura.regionais[n].map(f => escapar(f) + (nomeFilial(f) ? ' <small>' + escapar(nomeFilial(f)) + '</small>' : '')).join(', ') +
+      '</td><td>' + (resp ? escapar(resp.nome) + '<br><small>' + escapar(resp.email) + '</small>' : '<span class="erro">Sem responsável</span>') + '</td><td>' + ops.length + '</td></tr>';
+  }
+  $('tabRegionais').innerHTML = html + '</tbody>';
+  let hu = '<thead><tr><th>Nome</th><th>E-mail</th><th>Perfil</th><th>Regional</th><th></th></tr></thead><tbody>';
+  for (const u of usuarios.slice().sort((a, b) => (a.regional + a.nome).localeCompare(b.regional + b.nome, 'pt-BR'))) {
+    hu += '<tr><td>' + escapar(u.nome) + '</td><td>' + escapar(u.email) + '</td><td>' + escapar(u.perfil) + '</td><td>' + escapar(u.regional) +
+      (estrutura.regionais[u.regional] ? '' : ' <small class="erro">não está na pasta</small>') + '</td><td class="acoes-linha"><button class="mini sec" data-editar="' +
+      u.id + '">Editar</button> <button class="mini perigo" data-remover="' + u.id + '">Remover</button></td></tr>';
+  }
+  if (!usuarios.length) hu += '<tr><td colspan="5">Nenhum usuário cadastrado.</td></tr>';
+  $('tabUsuarios').innerHTML = hu + '</tbody>';
+}
+
+function limparFormUsuario() {
+  editandoId = null;
+  $('uTitulo').textContent = 'Novo usuário';
+  $('uNome').value = $('uEmail').value = '';
+  $('uPerfil').value = 'Responsável';
+  $('uErro').textContent = '';
+  $('btnUCancelar').hidden = true;
+}
+
+$('btnUSalvar').addEventListener('click', async () => {
+  const nome = $('uNome').value.trim().replace(/\s+/g, ' ');
+  const email = $('uEmail').value.trim().toLowerCase();
+  const perfil = $('uPerfil').value, regional = $('uRegional').value;
+  const erro = t => { $('uErro').textContent = t; };
+  if (!nome) return erro('Informe o nome.');
+  if (!/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email)) return erro('Informe um e-mail válido.');
+  if (!regional) return erro('Escolha a regional. Se a lista estiver vazia, escolha a pasta primeiro.');
+  if (usuarios.some(u => u.email === email && u.id !== editandoId)) return erro('Já existe um usuário com este e-mail.');
+  const outro = usuarios.find(u => u.perfil === 'Responsável' && u.regional === regional && u.id !== editandoId);
+  if (perfil === 'Responsável' && outro) return erro('A regional ' + regional + ' já tem responsável: ' + outro.nome + '. Mude antes o perfil dessa pessoa para Operador.');
+  if (editandoId) Object.assign(usuarios.find(u => u.id === editandoId), { nome, email, perfil, regional });
+  else usuarios.push({ id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), nome, email, perfil, regional });
+  await kvGravar('usuarios', usuarios);
+  limparFormUsuario();
+  await desenharAcessos();
+  await publicarCadastro();
+});
+$('btnUCancelar').addEventListener('click', limparFormUsuario);
+
+$('tabUsuarios').addEventListener('click', async ev => {
+  const ed = ev.target.closest('[data-editar]'), rm = ev.target.closest('[data-remover]');
+  if (ed) {
+    const u = usuarios.find(x => x.id === ed.dataset.editar);
+    editandoId = u.id;
+    $('uTitulo').textContent = 'Editar usuário';
+    $('uNome').value = u.nome; $('uEmail').value = u.email; $('uPerfil').value = u.perfil;
+    preencherRegionais();
+    $('uRegional').value = u.regional;
+    $('uErro').textContent = '';
+    $('btnUCancelar').hidden = false;
+    $('uNome').focus();
+  } else if (rm) {
+    const u = usuarios.find(x => x.id === rm.dataset.remover);
+    if (!confirm('Remover ' + u.nome + '?')) return;
+    usuarios = usuarios.filter(x => x.id !== u.id);
+    await kvGravar('usuarios', usuarios);
+    await desenharAcessos();
+    await publicarCadastro();
+  }
+});
+
+// ---------- Navegação entre abas ----------
+document.querySelectorAll('#nav button').forEach(b => b.addEventListener('click', async () => {
+  document.querySelectorAll('#nav button').forEach(x => x.classList.toggle('sel', x === b));
+  ['abaConf', 'abaAcessos'].forEach(id => { $(id).hidden = id !== b.dataset.aba; });
+  if (b.dataset.aba === 'abaAcessos') await desenharAcessos();
+}));
 
 // ---------- Cruzamento ----------
 async function cruzar(codigo) {
@@ -656,6 +1004,7 @@ async function abrir(codigo) {
   $('detAviso').hidden = dados.temBase;
   $('detAviso').textContent = 'A base de ativos não está carregada. Sem ela, "A localizar" fica vazio e as descrições vêm só do arquivo do celular.';
   $('btnStatus').textContent = c.status === 'finalizada' ? 'Reabrir conferência' : 'Marcar como finalizada';
+  mostrarAceite(c);
   $('btnTermos').textContent = 'Termos de transferência' + (dados.transferir.length ? ' (' + dados.transferir.length + ')' : '');
   if (!$('termoBox').hidden && $('termoBox').dataset.codigo !== c.codigo) $('termoBox').hidden = true;
   $('termoBox').dataset.codigo = c.codigo;
@@ -708,15 +1057,22 @@ function desenharTabela() {
 $('busca').addEventListener('input', () => { if (dados) desenharTabela(); });
 
 // ---------- Ações ----------
-$('btnRelatorio').addEventListener('click', () => {
+const LARGURAS = { localizados: [12, 60, 11, 11, 15, 20, 18, 20, 20, 12, 10], aLocalizar: [12, 60, 11, 15, 13, 15, 15, 28], transferir: [12, 60, 20, 22, 20, 18, 20, 20], naoCadastrados: [12, 12, 20, 18, 20, 20, 10] };
+
+function relatorioBlob(d) {
   const wb = XLSX.utils.book_new();
-  XLSX.utils.book_append_sheet(wb, abaDeMatriz(linhasResumo(dados), [58, 40, 14]), 'Resumo');
-  const larguras = { localizados: [12, 60, 11, 11, 15, 20, 18, 20, 20, 12, 10], aLocalizar: [12, 60, 11, 15, 13, 15, 15, 28], transferir: [12, 60, 20, 22, 20, 18, 20, 20], naoCadastrados: [12, 12, 20, 18, 20, 20, 10] };
-  for (const a of ABAS) {
-    XLSX.utils.book_append_sheet(wb, abaDeMatriz([COLUNAS[a.id]].concat(linhasDaAba(a.id, dados)), larguras[a.id]), a.nome);
-  }
-  baixarArquivo(planilhaParaBlob(wb), 'Relatorio_Conferencia_' + dados.conf.codigo + '.xlsx');
-});
+  XLSX.utils.book_append_sheet(wb, abaDeMatriz(linhasResumo(d), [58, 40, 14]), 'Resumo');
+  for (const a of ABAS) XLSX.utils.book_append_sheet(wb, abaDeMatriz([COLUNAS[a.id]].concat(linhasDaAba(a.id, d)), LARGURAS[a.id]), a.nome);
+  return planilhaParaBlob(wb);
+}
+
+function planilhaUmaAba(id, d) {
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, abaDeMatriz([COLUNAS[id]].concat(linhasDaAba(id, d)), LARGURAS[id]), ABAS.find(a => a.id === id).nome);
+  return planilhaParaBlob(wb);
+}
+
+$('btnRelatorio').addEventListener('click', () => baixarArquivo(relatorioBlob(dados), 'Relatorio_Conferencia_' + dados.conf.codigo + '.xlsx'));
 
 $('btnStatus').addEventListener('click', async () => {
   const c = await confLer(selecionada);
@@ -758,6 +1114,9 @@ $('btnExcluir').addEventListener('click', async () => {
   cargos = (await kvLer('cargos')) || [];
   logoTermo = (await kvLer('logoTermo')) || '';
   responsaveis = (await kvLer('responsaveis')) || {};
+  pastaHandle = (await kvLer('pasta')) || null;
+  estrutura = (await kvLer('estrutura')) || estrutura;
+  usuarios = (await kvLer('usuarios')) || [];
   mostrarFiliais();
   mostrarBaseInfo();
   await desenharConferencias();

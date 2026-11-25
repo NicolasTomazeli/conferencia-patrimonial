@@ -12,9 +12,14 @@
 <body class="painel">
 <header class="topo">
   <h1>Conferência Patrimonial<span class="sub">Painel de apuração</span></h1>
+  <nav class="navegacao" id="nav">
+    <button data-aba="abaConf" class="sel">Conferências</button>
+    <button data-aba="abaAcessos">Acessos</button>
+  </nav>
   <span class="estado-base" id="versao"></span>
 </header>
 <main>
+<section id="abaConf">
   <div class="grade">
 
     <!-- ===== lateral ===== -->
@@ -123,11 +128,13 @@
           <div class="acoes">
             <button id="btnRelatorio">Exportar relatório em Excel</button>
             <button id="btnTermos" class="sec">Termos de transferência</button>
+            <button id="btnAceite" class="sec" hidden>Enviar para aceite</button>
             <button id="btnStatus" class="sec">Marcar como finalizada</button>
             <button id="btnExcluir" class="perigo">Excluir</button>
           </div>
         </div>
         <div class="nota aviso" id="detAviso" hidden></div>
+        <div class="nota" id="aceiteInfo"></div>
         <div class="resumo" id="resumo"></div>
 
         <div class="bloco" id="termoBox" hidden>
@@ -156,6 +163,58 @@
       </div>
     </div>
   </div>
+</section>
+
+<section id="abaAcessos" hidden>
+  <div class="grade-acessos">
+    <div>
+      <div class="bloco">
+        <h2>Pasta do controle de ativos</h2>
+        <p class="info" id="pastaInfo"></p>
+        <div class="linha">
+          <button id="btnPasta" class="sec">Escolher pasta</button>
+          <button id="btnPastaReconectar" hidden>Reconectar</button>
+        </div>
+        <div class="nota" id="pastaMsg"></div>
+      </div>
+
+      <div class="bloco">
+        <h2 id="uTitulo">Novo usuário</h2>
+        <label class="campo">Nome
+          <input type="text" id="uNome" autocomplete="off">
+        </label>
+        <label class="campo">E-mail
+          <input type="text" id="uEmail" inputmode="email" autocomplete="off" spellcheck="false">
+        </label>
+        <label class="campo">Perfil
+          <small>O responsável recebe os pedidos de aceite da regional. Cada regional tem um só.</small>
+          <select id="uPerfil"><option>Responsável</option><option>Operador</option></select>
+        </label>
+        <label class="campo">Regional
+          <select id="uRegional"></select>
+        </label>
+        <div class="nota erro" id="uErro"></div>
+        <div class="linha">
+          <button id="btnUCancelar" class="sec" hidden>Cancelar</button>
+          <button id="btnUSalvar">Salvar usuário</button>
+        </div>
+      </div>
+    </div>
+
+    <div>
+      <div class="cabecalho">
+        <div class="titulo">
+          <h2>Regionais</h2>
+          <div class="info" id="acessosInfo"></div>
+        </div>
+      </div>
+      <div class="nota" id="acessosMsg"></div>
+      <div class="tabela solta"><table id="tabRegionais"></table></div>
+      <h2 class="secao">Usuários</h2>
+      <div class="tabela solta"><table id="tabUsuarios"></table></div>
+    </div>
+  </div>
+</section>
 </main>
 
 <div id="impressao"></div>

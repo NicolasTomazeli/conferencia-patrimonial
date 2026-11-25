@@ -1,7 +1,7 @@
 'use strict';
 // Funções compartilhadas entre o coletor (celular) e o painel (PC).
 
-const VERSAO_APP = '1.7.0';
+const VERSAO_APP = '1.8.0';
 const ABA_LEITURAS = 'Conferencia';
 const ABA_INFO = 'Info';
 const COLUNAS_LEITURA = [
@@ -351,20 +351,24 @@ async function idVivo(codigo, dispositivo) {
   return (await sha256Hex(new TextEncoder().encode(codigo + '|' + dispositivo))).slice(0, 32);
 }
 
-async function cifrarVivo(objeto) {
+// Cifra um objeto com uma chave AES-GCM: JSON, gzip, IV aleatório de 12 bytes na frente, tudo em base64.
+async function cifrarCom(chave, objeto) {
   const claro = await transformar(new TextEncoder().encode(JSON.stringify(objeto)), new CompressionStream('gzip'));
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const cifrado = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, chaveVivoAtual, claro));
+  const cifrado = new Uint8Array(await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, chave, claro));
   const tudo = new Uint8Array(12 + cifrado.length);
   tudo.set(iv, 0); tudo.set(cifrado, 12);
   return bytesParaBase64(tudo);
 }
 
-async function decifrarVivo(b64) {
+async function decifrarCom(chave, b64) {
   const bytes = base64ParaBytes(b64);
-  const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, chaveVivoAtual, bytes.slice(12));
+  const claro = await crypto.subtle.decrypt({ name: 'AES-GCM', iv: bytes.slice(0, 12) }, chave, bytes.slice(12));
   return JSON.parse(new TextDecoder().decode(await transformar(new Uint8Array(claro), new DecompressionStream('gzip'))));
 }
+
+const cifrarVivo = objeto => cifrarCom(chaveVivoAtual, objeto);
+const decifrarVivo = b64 => decifrarCom(chaveVivoAtual, b64);
 
 async function pedirVivo(metodo, caminho, corpo) {
   const r = await fetch(urlVivo(caminho), {
@@ -374,4 +378,71 @@ async function pedirVivo(metodo, caminho, corpo) {
   });
   if (!r.ok) throw new Error('erro ' + r.status);
   return r.json();
+}
+
+// ---------- Pedidos de aceite por e-mail ----------
+// Cada pedido é um pacote cifrado com uma chave aleatória só dele. A chave viaja apenas no link do
+// e-mail, depois do "#": essa parte do endereço nunca é enviada a servidor nenhum. A decisão do
+// responsável é gravada uma única vez (as regras do banco não deixam alterar depois).
+const PASTA_TIPO = { conferencia: 'Conferencias', transferencia: 'Transferencias', baixa: 'Baixas' };
+
+const bytesParaB64url = b => bytesParaBase64(b).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+function b64urlParaBytes(s) {
+  s = String(s).replace(/-/g, '+').replace(/_/g, '/');
+  while (s.length % 4) s += '=';
+  return base64ParaBytes(s);
+}
+const chaveAprovacao = texto => crypto.subtle.importKey('raw', b64urlParaBytes(texto), 'AES-GCM', false, ['encrypt', 'decrypt']);
+
+// Quem dá o aceite de uma filial: o responsável cadastrado na regional dela.
+function responsavelDaFilial(cad, filial) {
+  const regional = (cad && cad.filialRegional && cad.filialRegional[String(filial)]) || '';
+  const u = regional ? (cad.usuarios || []).find(x => x.perfil === 'Responsável' && x.regional === regional) : null;
+  return { regional, responsavel: u ? { nome: u.nome, email: u.email } : null };
+}
+
+// Monta as listas da conferência. descricao(p) devolve [descrição, filial base] ou null;
+// ativosFilial é a lista [patrimônio, descrição] de tudo o que a base tem na filial.
+function montarPacoteConferencia(o) {
+  const lidos = new Set(), localizados = [], transferencias = [], naoCadastrados = [];
+  for (const l of o.itens) {
+    lidos.add(l.patrimonio);
+    const b = o.descricao(l.patrimonio);
+    if (!b) naoCadastrados.push([l.patrimonio, l.setor || '']);
+    else if (String(b[1]) === String(o.conf.filial)) localizados.push([l.patrimonio, b[0], l.setor || '']);
+    else transferencias.push([l.patrimonio, b[0], String(b[1]), l.setor || '']);
+  }
+  const aLocalizar = o.ativosFilial.filter(r => !lidos.has(r[0]));
+  const porNumero = (a, b) => Number(a[0]) - Number(b[0]);
+  [localizados, transferencias, naoCadastrados, aLocalizar].forEach(l => l.sort(porNumero));
+  return {
+    tipo: 'conferencia', codigo: o.conf.codigo, filial: String(o.conf.filial), nomeFilial: o.nomeFilial || '', regional: o.regional || '',
+    responsavel: o.responsavel, operador: o.operador || '', criadaEm: o.conf.criadaEm || 0, finalizadaEm: o.conf.finalizadaEm || 0,
+    geradoEm: Date.now(), localizados, aLocalizar, transferencias, naoCadastrados,
+    resumo: { totalFilial: o.ativosFilial.length, localizados: localizados.length, aLocalizar: aLocalizar.length,
+      transferencias: transferencias.length, naoCadastrados: naoCadastrados.length }
+  };
+}
+
+async function criarAprovacao(pacote) {
+  const chaveTexto = bytesParaB64url(crypto.getRandomValues(new Uint8Array(32)));
+  const id = Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+  const d = await cifrarCom(await chaveAprovacao(chaveTexto), pacote);
+  await pedirVivo('PUT', 'a/' + id, { t: Date.now(), d });
+  return {
+    id, chave: chaveTexto, hash: await sha256Hex(new TextEncoder().encode(d)),
+    link: new URL('aceite.html', location.href).href.split('#')[0] + '#' + id + '.' + chaveTexto,
+    para: pacote.responsavel.email, nome: pacote.responsavel.nome, tipo: pacote.tipo, codigo: pacote.codigo,
+    filial: pacote.filial, nomeFilial: pacote.nomeFilial, regional: pacote.regional, resumo: pacote.resumo,
+    criadoEm: Date.now(), enviadoEm: 0
+  };
+}
+
+// O script do Google não devolve resposta legível ao navegador (no-cors): o envio é "dispare e esqueça".
+async function enviarEmailAceite(ap) {
+  if (!EMAIL_URL) throw new Error('o envio de e-mail ainda não está configurado');
+  const corpo = { id: ap.id, para: ap.para, nome: ap.nome, tipo: ap.tipo, codigo: ap.codigo, filial: ap.filial,
+    nomeFilial: ap.nomeFilial, regional: ap.regional, link: ap.link, resumo: ap.resumo };
+  await fetch(EMAIL_URL, { method: 'POST', mode: 'no-cors', cache: 'no-store', credentials: 'omit', referrerPolicy: 'no-referrer',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, body: JSON.stringify(corpo) });
 }

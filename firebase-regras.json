@@ -16,6 +16,28 @@
           ".validate": "newData.hasChildren(['t', 'd']) && newData.child('t').isNumber() && newData.child('d').isString() && newData.child('d').val().length < 600000",
           "$outro": { ".validate": "$outro === 't' || $outro === 'd'" }
         }
+      },
+      "cad": {
+        ".read": true,
+        ".write": true,
+        ".validate": "newData.hasChildren(['t', 'd']) && newData.child('t').isNumber() && newData.child('d').isString() && newData.child('d').val().length < 3000000",
+        "$outro": { ".validate": "$outro === 't' || $outro === 'd'" }
+      },
+      "a": {
+        "$id": {
+          ".read": true,
+          ".write": "$id.matches(/^[0-9a-f]{32}$/) && !root.child('v1/s/' + $id).exists()",
+          ".validate": "newData.hasChildren(['t', 'd']) && newData.child('t').isNumber() && newData.child('d').isString() && newData.child('d').val().length < 8000000",
+          "$outro": { ".validate": "$outro === 't' || $outro === 'd'" }
+        }
+      },
+      "s": {
+        "$id": {
+          ".read": true,
+          ".write": "$id.matches(/^[0-9a-f]{32}$/) && !data.exists() && root.child('v1/a/' + $id).exists()",
+          ".validate": "newData.hasChildren(['t', 'd']) && newData.child('t').isNumber() && newData.child('d').isString() && newData.child('d').val().length < 20000",
+          "$outro": { ".validate": "$outro === 't' || $outro === 'd'" }
+        }
       }
     }
   }

@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self' https://*.firebaseio.com https://*.firebasedatabase.app; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta name="referrer" content="no-referrer">
+<meta name="robots" content="noindex">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="theme-color" content="#17212b">
+<title>Pedido de aceite · Conferência Patrimonial</title>
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="estilo.css">
+</head>
+<body class="painel aceite">
+<header class="topo">
+  <h1>Conferência Patrimonial<span class="sub">Pedido de aceite</span></h1>
+</header>
+<main>
+  <div class="nota" id="carregando">Abrindo o pedido...</div>
+
+  <div id="pedido" hidden>
+    <div class="cabecalho">
+      <div class="titulo">
+        <h2 id="titulo"></h2>
+        <div class="info" id="subtitulo"></div>
+      </div>
+      <div class="acoes"><button id="btnBaixar" class="sec">Baixar as listas em Excel</button></div>
+    </div>
+    <div class="resumo" id="resumo"></div>
+
+    <div class="bloco decisao" id="decisao">
+      <div id="jaDecidido" hidden></div>
+      <div id="formDecisao">
+        <h2>Sua decisão</h2>
+        <p class="info">Confira as listas abaixo antes de decidir. O aceite fica registrado com o seu nome, o e-mail deste pedido, a data e a hora.</p>
+        <label class="campo">Seu nome
+          <input type="text" id="nome" autocomplete="name">
+        </label>
+        <label class="marca"><input type="checkbox" id="conferi"> Conferi as listas desta conferência.</label>
+        <div id="motivoBox" hidden>
+          <label class="campo">Motivo da recusa
+            <textarea id="motivo" rows="3" placeholder="Explique o que precisa ser corrigido"></textarea>
+          </label>
+        </div>
+        <div class="nota erro" id="erroDecisao"></div>
+        <div class="linha">
+          <button id="btnRecusar" class="perigo">Recusar</button>
+          <button id="btnAceitar" class="ok">Dar o aceite</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="barra-abas">
+      <div class="abas" id="abas"></div>
+      <input type="search" id="busca" placeholder="Filtrar por número ou descrição">
+    </div>
+    <div class="tabela"><table id="tabela"></table></div>
+    <div class="info" id="tabInfo"></div>
+  </div>
+</main>
+
+<script src="lib/xlsx.full.min.js"></script>
+<script src="config.js"></script>
+<script src="comum.js"></script>
+<script src="aceite.js"></script>
+</body>
+</html>
