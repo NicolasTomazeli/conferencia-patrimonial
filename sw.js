@@ -1,6 +1,6 @@
 // Service worker: permite abrir o app sem internet.
 // Estratégia: tenta a rede primeiro (para receber atualizações) e cai no cache se estiver offline.
-const CACHE = 'conferencia-v11';
+const CACHE = 'conferencia-v12';
 const ARQUIVOS = [
   './', './index.html', './app.js', './comum.js', './config.js', './estilo.css',
   './painel.html', './painel.js', './aceite.html', './aceite.js',

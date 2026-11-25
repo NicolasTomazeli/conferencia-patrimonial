@@ -263,3 +263,4 @@ body.aceite .decisao { border: 2px solid var(--indigo); }
 body.aceite .decisao .linha button { max-width: 260px; }
 @media (min-width: 900px) { body.aceite .resumo { grid-template-columns: repeat(5, 1fr); } }
 @media (max-width: 560px) { body.aceite .decisao .linha button { max-width: none; } }
+input[readonly] { background: #e9edf1; border-color: #d3d9e0; color: var(--tinta-2); }

@@ -16,7 +16,7 @@
 
 <!-- ===== INÍCIO ===== -->
 <section id="telaMenu">
-  <header class="topo"><h1>Conferência Patrimonial</h1></header>
+  <header class="topo"><h1>Conferência Patrimonial<span class="sub" id="menuFilial"></span></h1></header>
   <main>
     <!-- instalar o app -->
     <div class="bloco" id="instalar" hidden>
@@ -67,6 +67,18 @@
     </div>
 
     <div class="rodape" id="rodape"></div>
+    <button id="btnTrocarFilial" class="texto" hidden>Trocar a filial deste celular</button>
+  </main>
+</section>
+
+<!-- ===== ESCOLHA DA FILIAL ===== -->
+<section id="telaFilial" hidden>
+  <header class="topo"><button id="btnFilialVoltar" hidden>Voltar</button><h1>Qual é a sua filial?</h1></header>
+  <main>
+    <p class="info" style="margin-top:0">Este celular vai mostrar só as conferências da filial escolhida. Escolha com atenção: é a filial onde você vai conferir.</p>
+    <input type="search" id="buscaFilial" placeholder="Busque pelo número, cidade ou regional">
+    <ul class="lista cartoes" id="listaFiliais"></ul>
+    <p class="info" id="filiaisVazio" hidden></p>
   </main>
 </section>
 
@@ -74,9 +86,9 @@
 <section id="telaNova" hidden>
   <header class="topo"><button data-voltar>Voltar</button><h1>Nova conferência</h1></header>
   <main>
-    <label class="campo">Em qual filial você está?
-      <small>Digite o número da filial.</small>
-      <input type="number" id="novaFilial" inputmode="numeric" min="1" max="9999" placeholder="Ex.: 90">
+    <label class="campo">Filial
+      <input type="text" id="novaFilialNome" readonly tabindex="-1">
+      <input type="hidden" id="novaFilial">
     </label>
     <div class="info" id="novaFilialInfo"></div>
     <label class="campo">Seu nome

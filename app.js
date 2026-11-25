@@ -13,7 +13,8 @@ let track = null, detector = null, lendo = false, lanterna = false, wakeLock = n
 let candidato = null, repeticoes = 0, ultimoValor = null, ultimoEm = 0;
 
 // ---------- Navegação ----------
-const TELAS = ['telaMenu', 'telaNova', 'telaLista', 'telaLeitura'];
+const TELAS = ['telaMenu', 'telaFilial', 'telaNova', 'telaLista', 'telaLeitura'];
+let minhaFilial = '';   // filial à qual este celular está vinculado
 function mostrar(tela) {
   TELAS.forEach(t => { $(t).hidden = t !== tela; });
   window.scrollTo(0, 0);
@@ -22,7 +23,10 @@ function mostrar(tela) {
 async function irMenu() {
   pararCamera();
   conf = null;
-  const todas = await confListar();
+  if (base.size && !minhaFilial) return abrirEscolhaFilial(false);
+  $('menuFilial').textContent = minhaFilial ? rotuloFilial(minhaFilial) : '';
+  $('btnTrocarFilial').hidden = !minhaFilial;
+  const todas = (await confListar()).filter(c => c.filial === minhaFilial);
   const abertas = todas.filter(c => c.status === 'aberta').sort((a, b) => b.criadaEm - a.criadaEm);
   const ul = $('abertas');
   ul.innerHTML = '';
@@ -191,6 +195,7 @@ async function baixarBase(meta, chave) {
   $('senhaBase').value = '';
   mostrarBaseInfo();
   liberarMenu();
+  if (!minhaFilial) setTimeout(() => { if (!minhaFilial && !$('telaMenu').hidden) irMenu(); }, 1200);
   syncMsg('Base atualizada automaticamente: ' + base.size.toLocaleString('pt-BR') + ' ativos.', 'bom');
   return true;
 }
@@ -219,6 +224,60 @@ document.addEventListener('visibilitychange', () => {
   if (!document.hidden && !$('telaMenu').hidden) verificarBase(false);
 });
 
+// ---------- Filial deste celular ----------
+// Na primeira vez, a pessoa escolhe a filial. A partir daí o app só cria e mostra conferências dela.
+function rotuloFilial(f) {
+  const nome = ((cadastro && cadastro.nomes) || {})[f];
+  return 'Filial ' + f + (nome ? ', ' + nome : '');
+}
+
+function opcoesDeFilial() {
+  const nomes = (cadastro && cadastro.nomes) || {};
+  const regionais = (cadastro && cadastro.filialRegional) || {};
+  // com o cadastro do painel, valem as filiais organizadas em regionais; sem ele, as da base
+  const lista = Object.keys(regionais).length ? Object.keys(regionais) : Array.from(totalPorFilial.keys());
+  return lista.map(f => ({ f, nome: nomes[f] || '', regional: regionais[f] || '', ativos: totalPorFilial.get(f) || 0 }))
+    .sort((a, b) => (a.regional + '').localeCompare(b.regional + '', 'pt-BR') || Number(a.f) - Number(b.f));
+}
+
+function desenharFiliais() {
+  const termo = semAcento($('buscaFilial').value);
+  const todas = opcoesDeFilial();
+  const lista = todas.filter(o => !termo || semAcento(o.f + ' ' + o.nome + ' ' + o.regional).includes(termo) || o.f === termo.replace(/^0+/, ''));
+  $('listaFiliais').innerHTML = lista.slice(0, 80).map(o =>
+    '<li data-filial="' + escapar(o.f) + '"><div class="txt"><div class="t1">Filial ' + escapar(o.f) + '</div><div class="t2">' +
+    escapar([o.nome, o.regional ? 'regional ' + o.regional : '', o.ativos.toLocaleString('pt-BR') + ' ativos'].filter(Boolean).join(', ')) +
+    '</div></div><button class="mini">Escolher</button></li>').join('');
+  $('filiaisVazio').hidden = lista.length > 0;
+  $('filiaisVazio').textContent = todas.length ? 'Nenhuma filial encontrada com esse termo.' : 'A lista de filiais ainda não chegou. Verifique a internet e abra o app de novo.';
+}
+
+async function abrirEscolhaFilial(podeVoltar) {
+  await atualizarCadastro().catch(() => {});
+  $('buscaFilial').value = '';
+  $('btnFilialVoltar').hidden = !podeVoltar;
+  desenharFiliais();
+  mostrar('telaFilial');
+}
+
+$('buscaFilial').addEventListener('input', desenharFiliais);
+$('btnFilialVoltar').addEventListener('click', irMenu);
+$('listaFiliais').addEventListener('click', async ev => {
+  const li = ev.target.closest('li[data-filial]');
+  if (!li) return;
+  const f = li.dataset.filial;
+  if (!confirm('Vincular este celular à ' + rotuloFilial(f) + '?\n\nO app vai mostrar só as conferências desta filial.')) return;
+  minhaFilial = f;
+  await kvGravar('minhaFilial', f);
+  irMenu();
+});
+$('btnTrocarFilial').addEventListener('click', async () => {
+  const abertas = (await confListar()).filter(c => c.filial === minhaFilial && c.status === 'aberta').length;
+  if (!confirm('Trocar a filial deste celular?' + (abertas ? '\n\nAs ' + abertas + ' conferências em andamento da ' + rotuloFilial(minhaFilial) +
+    ' ficam guardadas, mas só aparecem de novo se você voltar para esta filial.' : ''))) return;
+  abrirEscolhaFilial(true);
+});
+
 // ---------- Cadastro de regionais e usuários (publicado pelo painel) ----------
 let cadastro = null;
 
@@ -235,11 +294,13 @@ async function atualizarCadastro() {
 
 // ---------- Nova conferência ----------
 $('btnNova').addEventListener('click', async () => {
-  $('novaFilial').value = '';
+  $('novaFilial').value = minhaFilial;
+  $('novaFilialNome').value = rotuloFilial(minhaFilial);
   $('novaFilialInfo').textContent = '';
   $('novaErro').textContent = '';
   $('novaSetor').value = '';
   $('novaUsuario').value = (await kvLer('usuario')) || '';
+  $('novaFilial').dispatchEvent(new Event('input'));
   mostrar('telaNova');
 });
 
@@ -291,6 +352,10 @@ $('arqConf').addEventListener('change', async ev => {
     const { info, porCodigo } = await lerArquivoConferencia(arq);
     if (porCodigo.size > 1) throw new Error('o arquivo tem mais de uma conferência.');
     const [codigo, itens] = porCodigo.entries().next().value;
+    const filialArquivo = (itens[0] && itens[0].filialAtual) || normalizarFilial(info.FILIAL) || normalizarFilial(codigo.split('-')[0]);
+    if (filialArquivo !== minhaFilial) {
+      throw new Error('a conferência ' + codigo + ' é da filial ' + filialArquivo + ', e este celular está vinculado à filial ' + minhaFilial + '.');
+    }
     if (/^FINALIZADA/.test(semAcento(info.STATUS))) {
       throw new Error('a conferência ' + codigo + ' já foi finalizada e não pode receber novas leituras.');
     }
@@ -334,7 +399,7 @@ $('arqConf').addEventListener('change', async ev => {
 
 // ---------- Listas ----------
 async function abrirLista(status) {
-  const todas = (await confListar()).filter(c => c.status === status).sort((a, b) => b.criadaEm - a.criadaEm);
+  const todas = (await confListar()).filter(c => c.status === status && c.filial === minhaFilial).sort((a, b) => b.criadaEm - a.criadaEm);
   $('listaTitulo').textContent = status === 'aberta' ? 'Continuar conferência' : 'Conferências finalizadas';
   $('listaVazia').hidden = todas.length > 0;
   $('listaDica').hidden = status === 'aberta' || !todas.length;
@@ -986,6 +1051,7 @@ $('btnPausar').addEventListener('click', irMenu);
   }
   await carregarVivo();
   cadastro = (await kvLer('cadastro')) || null;
+  minhaFilial = (await kvLer('minhaFilial')) || '';
   atualizarCadastro().catch(() => {});
   vivoPendentes = new Set((await kvLer('vivoPendentes')) || []);
   if (vivoPendentes.size) agendarVivo(3000);
