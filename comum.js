@@ -1,7 +1,7 @@
 'use strict';
 // Funções compartilhadas entre o coletor (celular) e o painel (PC).
 
-const VERSAO_APP = '1.5.0';
+const VERSAO_APP = '1.6.0';
 const ABA_LEITURAS = 'Conferencia';
 const ABA_INFO = 'Info';
 const COLUNAS_LEITURA = [

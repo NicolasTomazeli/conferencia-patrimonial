@@ -135,6 +135,9 @@ ul.lista.cartoes li { margin-top: 8px; padding: 12px 14px; border: 1px solid var
 .plaqueta.s-nao::before { background: var(--erro); }     .plaqueta.s-nao .sit { color: var(--erro); }
 .plaqueta.s-nao { background: linear-gradient(180deg, #fff6f5, var(--erro-fundo)); border-color: #e0a19c; }
 
+.proposta { border: 2px solid var(--indigo); }
+.proposta .num { margin-top: 8px; font-family: var(--numero); font-size: 46px; font-weight: 700; line-height: 1; letter-spacing: 3px; }
+.proposta .desc { margin-top: 6px; font-size: 17px; font-weight: 500; }
 .progresso { margin-top: 14px; }
 .progresso .topo-prog { display: flex; align-items: baseline; gap: 6px; }
 .progresso b { font-family: var(--numero); font-size: 28px; font-weight: 700; line-height: 1; }

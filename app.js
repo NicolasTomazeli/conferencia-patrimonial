@@ -430,6 +430,7 @@ async function registrar(valor, origem) {
   }
   await leituraGravar(l);
   marcarVivo(conf.codigo);
+  semBarrasDesde = Date.now();
 
   const s = situacaoDe(l);
   $('ultNum').textContent = p;
@@ -489,6 +490,95 @@ let cameras = [], cameraId = null, formatos = null, quadro = 0, recorte = null;
 const REFORCO_MODOS = ['FixedThreshold', 'GlobalHistogram', 'LocalAverage'];
 const REFORCO_LARGURA = 1600;
 let reforco = null, reforcoTela = null, reforcoVez = 0;
+
+// Último recurso: ler o número impresso embaixo do código de barras (OCR).
+// Só entra depois de um tempo sem conseguir ler as barras. Como um dígito trocado quase sempre
+// cai em outro ativo que existe, o número nunca é registrado sozinho: o app mostra o número e a
+// descrição, e a pessoa confirma com um toque.
+const OCR_ESPERA = 1500;      // ms sem ler barras antes de tentar o número
+const OCR_LARGURA = 1200;
+let ocr = null, ocrOcupado = false, ocrTela = null, ocrAnterior = '', ocrProposta = '', semBarrasDesde = 0, ocrVez = 0;
+const ocrRecusados = new Map();   // número -> até quando ignorar
+
+function carregarOcr() {
+  if (ocr) return ocr;
+  ocr = (async () => {
+    if (typeof Tesseract === 'undefined') return null;
+    try {
+      const w = await Tesseract.createWorker('eng', 1, {
+        workerPath: 'lib/ocr/worker.min.js', corePath: 'lib/ocr/core', langPath: 'lib/ocr/lang',
+        workerBlobURL: false, gzip: true
+      });
+      await w.setParameters({ tessedit_char_whitelist: '0123456789', user_defined_dpi: '300' });
+      return w;
+    } catch (e) { console.debug('ocr indisponível', e); return null; }
+  })();
+  return ocr;
+}
+
+async function tentarOcr(fonte, largura, altura) {
+  if (ocrOcupado || ocrProposta || !largura) return;
+  ocrOcupado = true;
+  try {
+    const w = await carregarOcr();
+    if (!w) return;
+    const escala = Math.min(1, OCR_LARGURA / largura);
+    ocrTela = ocrTela || document.createElement('canvas');
+    ocrTela.width = Math.round(largura * escala); ocrTela.height = Math.round(altura * escala);
+    const ctx = ocrTela.getContext('2d', { alpha: false, willReadFrequently: true });
+    ctx.drawImage(fonte, 0, 0, ocrTela.width, ocrTela.height);
+    // tons de cinza com o contraste esticado: é o que mais ajuda a reconhecer os dígitos
+    const img = ctx.getImageData(0, 0, ocrTela.width, ocrTela.height), px = img.data;
+    let min = 255, max = 0;
+    for (let i = 0; i < px.length; i += 4) {
+      const g = (px[i] * 3 + px[i + 1] * 6 + px[i + 2]) / 10;
+      px[i] = g; if (g < min) min = g; if (g > max) max = g;
+    }
+    const faixa = (max - min) || 1;
+    for (let i = 0; i < px.length; i += 4) px[i] = px[i + 1] = px[i + 2] = (px[i] - min) * 255 / faixa;
+    ctx.putImageData(img, 0, 0);
+    // alterna dois modos de análise da página; a proposta exige o mesmo número nos dois
+    await w.setParameters({ tessedit_pageseg_mode: ocrVez++ % 2 ? '3' : '11' });
+    const r = await w.recognize(ocrTela);
+    console.debug('ocr', ocrTela.width + 'x' + ocrTela.height, JSON.stringify(r.data.text));
+    if (!lendo || ocrProposta) return;
+    // a plaqueta sempre traz 6 dígitos; só interessa número que existe na base e ainda não foi lido
+    const agora = Date.now();
+    const candidatos = (r.data.text.match(/\d+/g) || []).filter(t => t.length === 6).map(normalizarPatrimonio)
+      .filter(p => p && base.has(p) && !leituras.has(p) && !(ocrRecusados.get(p) > agora));
+    const visto = candidatos.find(p => p === ocrAnterior);
+    ocrAnterior = candidatos[0] || '';
+    if (visto) proporOcr(visto);          // mesmo número em duas leituras seguidas
+  } catch (e) { console.debug('ocr erro', e);
+  } finally {
+    ocrOcupado = false;
+  }
+}
+
+function proporOcr(p) {
+  const item = base.get(p);
+  ocrProposta = p;
+  $('ocrNum').textContent = p.padStart(6, '0');
+  $('ocrDesc').textContent = item[0] + (String(item[1]) === String(conf.filial) ? '' : ' (pertence à filial ' + item[1] + ')');
+  $('ocrBox').hidden = false;
+  som('repetido');
+}
+
+function fecharOcr() {
+  ocrProposta = ''; ocrAnterior = '';
+  semBarrasDesde = Date.now();
+  $('ocrBox').hidden = true;
+}
+
+$('btnOcrSim').addEventListener('click', async () => {
+  const p = ocrProposta;
+  fecharOcr();
+  if (p && conf) await registrar(p, 'Número impresso');
+});
+$('btnOcrNao').addEventListener('click', () => {
+  if (ocrProposta) ocrRecusados.set(ocrProposta, Date.now() + 30000);
+  fecharOcr();
+});
 
 function carregarReforco() {
   if (reforco) return reforco;
@@ -594,6 +684,8 @@ async function ligarCamera(trocarPara) {
       (temNativo ? 'nativo' : '') + (temNativo && temReforco ? ' + ' : '') + (temReforco ? 'reforço' : '') + '.';
     try { if (navigator.wakeLock && !wakeLock) wakeLock = await navigator.wakeLock.request('screen'); } catch (e) {}
     candidato = null; repeticoes = 0;
+    semBarrasDesde = Date.now();
+    setTimeout(carregarOcr, 1200);          // prepara o leitor de números em segundo plano
     if (!lendo) { lendo = true; proximoQuadro(); }
   } catch (e) {
     aviso('Não foi possível abrir a câmera. Verifique se o app tem permissão de câmera. (' + e.message + ')');
@@ -631,6 +723,7 @@ function pararCamera() {
   $('btnTrocar').hidden = true;
   $('zoomBox').hidden = true;
   $('camInfo').textContent = '';
+  if (ocrProposta) fecharOcr();
   $('ligarCam').hidden = false;
   if (wakeLock) { wakeLock.release().catch(() => {}); wakeLock = null; }
 }
@@ -687,6 +780,12 @@ async function analisarQuadro() {
     }
     const validos = brutos.map(normalizarPatrimonio).filter(Boolean);
     const valor = validos.find(p => base.has(p)) || validos[0] || '';
+    if (valor) {
+      if (ocrProposta) fecharOcr();       // as barras leram: a proposta pelo número não é mais necessária
+      semBarrasDesde = Date.now();
+    } else if (r && Date.now() - semBarrasDesde > OCR_ESPERA) {
+      tentarOcr(recorte, r.w, r.h);       // não espera: o laço das barras continua rodando
+    }
     if (valor) {
       if (valor === candidato) repeticoes++; else { candidato = valor; repeticoes = 1; }
       if (base.has(valor) || repeticoes >= 2) {

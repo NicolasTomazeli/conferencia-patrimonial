@@ -2,7 +2,7 @@
 <html lang="pt-BR">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://api.github.com https://*.firebaseio.com https://*.firebasedatabase.app; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; media-src 'self' blob: mediastream:; connect-src 'self' https://api.github.com https://*.firebaseio.com https://*.firebasedatabase.app; worker-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="referrer" content="no-referrer">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#17212b">
@@ -123,6 +123,17 @@
     <p class="info" id="camInfo"></p>
     <p class="info" id="vivoMsg"></p>
 
+    <div class="bloco proposta" id="ocrBox" hidden aria-live="assertive">
+      <h2>O número impresso é este?</h2>
+      <p class="info">O código de barras não leu. Compare com a plaqueta antes de confirmar.</p>
+      <div class="num" id="ocrNum"></div>
+      <div class="desc" id="ocrDesc"></div>
+      <div class="linha">
+        <button id="btnOcrNao" class="sec">Não é</button>
+        <button id="btnOcrSim" class="ok">Sim, registrar</button>
+      </div>
+    </div>
+
     <div class="plaqueta" id="ultimo" aria-live="polite">
       <div class="rotulo">Última plaqueta lida</div>
       <div class="num" id="ultNum">—</div>
@@ -166,6 +177,7 @@
 
 <script src="lib/xlsx.full.min.js"></script>
 <script src="lib/zxing-reader.js"></script>
+<script src="lib/ocr/tesseract.min.js"></script>
 <script src="config.js"></script>
 <script src="comum.js"></script>
 <script src="app.js"></script>
