@@ -45,6 +45,19 @@
         </div>
       </details>
 
+      <details class="recolhe" id="filDetalhes">
+        <summary>
+          <span class="ponto" id="filPonto"></span>
+          <span>Filiais e termo<span class="apoio" id="filResumo"></span></span>
+        </summary>
+        <div class="dentro">
+          <div class="info" id="filInfo" style="margin-top:0"></div>
+          <label class="btn sec" style="margin-top:12px">Carregar planilha de termos
+            <input type="file" id="arqModelo" accept=".xlsm,.xlsx">
+          </label>
+        </div>
+      </details>
+
       <details class="recolhe" id="pubDetalhes">
         <summary>
           <span class="ponto" id="pubPonto"></span>
@@ -109,12 +122,30 @@
           </div>
           <div class="acoes">
             <button id="btnRelatorio">Exportar relatório em Excel</button>
+            <button id="btnTermos" class="sec">Termos de transferência</button>
             <button id="btnStatus" class="sec">Marcar como finalizada</button>
             <button id="btnExcluir" class="perigo">Excluir</button>
           </div>
         </div>
         <div class="nota aviso" id="detAviso" hidden></div>
         <div class="resumo" id="resumo"></div>
+
+        <div class="bloco" id="termoBox" hidden>
+          <h2>Termos de transferência</h2>
+          <p class="info" id="termoInfo"></p>
+          <div class="campos2">
+            <label class="campo">Data do documento
+              <input type="date" id="termoData">
+            </label>
+          </div>
+          <div id="termoGrupos"></div>
+          <datalist id="listaCargos"></datalist>
+          <div class="linha">
+            <button id="btnTermoCancelar" class="sec">Fechar</button>
+            <button id="btnTermoCsv" class="sec">Baixar CSV das transferências</button>
+            <button id="btnTermoImprimir">Gerar termos (imprimir ou salvar em PDF)</button>
+          </div>
+        </div>
 
         <div class="barra-abas">
           <div class="abas" id="abas"></div>
@@ -126,6 +157,8 @@
     </div>
   </div>
 </main>
+
+<div id="impressao"></div>
 
 <script src="lib/xlsx.full.min.js"></script>
 <script src="config.js"></script>

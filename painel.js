@@ -204,6 +204,173 @@ $('btnPublicar').addEventListener('click', async () => {
   atualizarPublicacao();
 });
 
+// ---------- Filiais, cargos e termos de transferência ----------
+let filiais = new Map();   // número -> { local, uf, completo }
+let cargos = [], logoTermo = '', responsaveis = {};
+
+const nomeFilial = f => { const x = filiais.get(String(f)); return x ? x.local + '/' + x.uf : ''; };
+const proprio = t => String(t || '').toLowerCase().replace(/(^|[\s\-'])([a-zà-ÿ])/g, (m, a, b) => a + b.toUpperCase());
+
+function mostrarFiliais() {
+  $('filPonto').className = 'ponto ' + (filiais.size ? 'bom' : 'aviso');
+  $('filResumo').textContent = filiais.size ? filiais.size + ' filiais cadastradas' : 'Cadastro não carregado';
+  $('filInfo').textContent = filiais.size ?
+    'Nomes, endereços, CNPJ e cargos vieram da planilha de termos. Carregue de novo quando ela mudar.' :
+    'Carregue a planilha "Termos de Transferência e Baixa". O painel usa dela a lista de filiais (aba cnpjs), os cargos e o logotipo.';
+  $('listaCargos').innerHTML = cargos.map(c => '<option value="' + escapar(c) + '">').join('');
+}
+
+$('arqModelo').addEventListener('change', async ev => {
+  const arq = ev.target.files[0];
+  ev.target.value = '';
+  if (!arq) return;
+  $('filResumo').textContent = 'Carregando, aguarde...';
+  await new Promise(r => setTimeout(r, 30));
+  try {
+    // lê só as abas necessárias: a planilha traz também a base inteira, que não interessa aqui
+    const wb = XLSX.read(await arq.arrayBuffer(), { type: 'array', sheets: ['cnpjs', 'config'], bookFiles: true });
+    if (!wb.Sheets.cnpjs) throw new Error('a planilha não tem a aba "cnpjs".');
+    const novas = new Map();
+    for (const r of XLSX.utils.sheet_to_json(wb.Sheets.cnpjs, { header: 1, defval: '' }).slice(1)) {
+      const f = normalizarFilial(r[0]);
+      if (f) novas.set(f, { local: String(r[1]).trim(), uf: String(r[2]).trim(), completo: String(r[3]).trim() });
+    }
+    if (!novas.size) throw new Error('nenhuma filial encontrada na aba "cnpjs".');
+    filiais = novas;
+    cargos = wb.Sheets.config ? XLSX.utils.sheet_to_json(wb.Sheets.config, { header: 1, defval: '' }).map(r => String(r[2] || '').trim()).filter(Boolean) : [];
+    const img = wb.files && Object.keys(wb.files).find(k => /^xl\/media\/image1\.(jpe?g|png)$/i.test(k));
+    if (img && wb.files[img].content) {
+      logoTermo = 'data:image/' + (/png$/i.test(img) ? 'png' : 'jpeg') + ';base64,' + bytesParaBase64(new Uint8Array(wb.files[img].content));
+    }
+    await kvGravar('filiais', Array.from(filiais));
+    await kvGravar('cargos', cargos);
+    await kvGravar('logoTermo', logoTermo);
+    mostrarFiliais();
+    await desenharConferencias();
+    if (selecionada) abrir(selecionada);
+  } catch (e) {
+    mostrarFiliais();
+    $('filDetalhes').open = true;
+    $('filInfo').innerHTML = '<span class="erro">Não foi possível ler a planilha: ' + escapar(e.message) + '</span>';
+  }
+});
+
+// Agrupa os itens a transferir pela filial de origem (a filial onde o bem está cadastrado).
+function gruposDeTransferencia() {
+  const grupos = new Map();
+  for (const l of dados.transferir) {
+    const origem = String(l.filialBase);
+    if (!grupos.has(origem)) grupos.set(origem, []);
+    grupos.get(origem).push(l);
+  }
+  return Array.from(grupos).sort((a, b) => Number(a[0]) - Number(b[0]));
+}
+
+function campoResp(prefixo, filial, rotulo) {
+  const r = responsaveis[filial] || {};
+  return '<div class="campos2"><label class="campo">' + escapar(rotulo) + '<input type="text" data-resp="' + prefixo + '-nome" data-filial="' + escapar(filial) +
+    '" value="' + escapar(r.nome || '') + '" placeholder="Nome completo"></label><label class="campo">Cargo<input type="text" list="listaCargos" data-resp="' +
+    prefixo + '-cargo" data-filial="' + escapar(filial) + '" value="' + escapar(r.cargo || '') + '" placeholder="Escolha ou digite"></label></div>';
+}
+
+$('btnTermos').addEventListener('click', () => {
+  const grupos = gruposDeTransferencia();
+  const destino = String(dados.conf.filial);
+  const hoje = new Date();
+  $('termoData').value = hoje.getFullYear() + '-' + doisDigitos(hoje.getMonth() + 1) + '-' + doisDigitos(hoje.getDate());
+  $('termoInfo').className = 'info';
+  $('termoInfo').textContent = !grupos.length ? 'Esta conferência não tem itens de outra filial, então não há termo a gerar.' :
+    (grupos.length === 1 ? 'Será gerado 1 termo' : 'Serão gerados ' + grupos.length + ' termos, um por filial de origem') +
+    ', com destino na filial ' + destino + (nomeFilial(destino) ? ' (' + nomeFilial(destino) + ')' : '') + '.' +
+    (filiais.size ? '' : ' Sem o cadastro de filiais, os termos saem só com o número da filial: carregue a planilha em "Filiais e termo".');
+  let html = grupos.length ? '<div class="grupo-termo"><h3>Destino: filial ' + escapar(destino) + (nomeFilial(destino) ? ', ' + escapar(nomeFilial(destino)) : '') +
+    '</h3>' + campoResp('destino', destino, 'Responsável na filial destino') + '</div>' : '';
+  for (const [origem, itens] of grupos) {
+    html += '<div class="grupo-termo"><h3>Saída: filial ' + escapar(origem) + (nomeFilial(origem) ? ', ' + escapar(nomeFilial(origem)) : '') + ' (' +
+      itens.length + (itens.length === 1 ? ' item' : ' itens') + ')</h3>' + campoResp('saida', origem, 'Responsável na filial de saída') + '</div>';
+  }
+  $('termoGrupos').innerHTML = html;
+  $('btnTermoImprimir').disabled = $('btnTermoCsv').disabled = !grupos.length;
+  $('termoBox').hidden = false;
+  $('termoBox').scrollIntoView({ block: 'nearest' });
+});
+$('btnTermoCancelar').addEventListener('click', () => { $('termoBox').hidden = true; });
+
+// Lê os campos do formulário e guarda os responsáveis para a próxima vez.
+async function lerResponsaveis() {
+  document.querySelectorAll('#termoGrupos input[data-resp]').forEach(i => {
+    const f = i.dataset.filial, campo = i.dataset.resp.split('-')[1];
+    responsaveis[f] = responsaveis[f] || {};
+    responsaveis[f][campo] = i.value.trim();
+  });
+  await kvGravar('responsaveis', responsaveis);
+}
+
+function valorTermo(b) {
+  if (!b) return '';
+  if (Number(b.to) === 99 || Number(b.to) === 100) return 'Baixado';
+  return typeof b.v === 'number' ? b.v.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : (b.v == null ? '' : String(b.v));
+}
+
+$('btnTermoImprimir').addEventListener('click', async () => {
+  await lerResponsaveis();
+  const grupos = gruposDeTransferencia();
+  const destino = String(dados.conf.filial);
+  const faltando = [destino].concat(grupos.map(g => g[0])).filter(f => !(responsaveis[f] && responsaveis[f].nome && responsaveis[f].cargo));
+  if (!$('termoData').value || faltando.length) {
+    $('termoInfo').className = 'info erro';
+    $('termoInfo').textContent = !$('termoData').value ? 'Informe a data do documento.' :
+      'Preencha nome e cargo dos responsáveis das filiais: ' + faltando.join(', ') + '.';
+    return;
+  }
+  const [ano, mes, dia] = $('termoData').value.split('-');
+  const data = dia + '/' + mes + '/' + ano;
+  const descricao = f => f + (filiais.get(f) ? ' - ' + filiais.get(f).completo : '');
+  const assinatura = f => proprio(responsaveis[f].nome) + ' - ' + proprio(responsaveis[f].cargo);
+  let html = '';
+  for (const [origem, itens] of grupos) {
+    const linhas = itens.map((l, i) => {
+      const b = basePorNumero.get(l.patrimonio);
+      return '<tr><td class="c">' + (i + 1) + '</td><td class="c">' + escapar(l.patrimonio) + '</td><td class="c">' + escapar(b && b.cb != null ? b.cb : '') +
+        '</td><td>' + escapar(l.descricao) + '</td><td class="c">' + escapar(b ? dataExcel(b.dt) : '') + '</td><td class="d">' + escapar(valorTermo(b)) +
+        '</td><td class="c">' + escapar(origem) + '</td></tr>';
+    }).join('');
+    html += '<section class="termo"><div class="cab">' + (logoTermo ? '<img src="' + logoTermo + '" alt="">' : '') +
+      '<div>LEGIÃO DA BOA VONTADE</div><div>PRESIDENTE: FRANCISCO DE ASSIS PERIOTTO</div><div class="titulo">DECLARAÇÃO DE TRANSFERÊNCIA</div></div>' +
+      '<div class="decl">Declaramos, para os devidos fins, que os bens móveis e/ou equipamentos relacionados abaixo foram transferidos da filial ' +
+      escapar(descricao(origem)) + ', para a filial ' + escapar(descricao(destino)) + '</div>' +
+      '<table><thead><tr><th class="c">N°</th><th class="c">Plaquinha</th><th class="c">Código do Bem</th><th>Descrição</th><th class="c">Data</th><th class="c">Valor</th><th class="c">Filial</th></tr></thead><tbody>' +
+      linhas + '</tbody></table>' +
+      '<div class="assina"><div>Por ser verdade, assino a presente declaração</div><div>' + escapar((nomeFilial(origem) || 'Filial ' + origem) + ' - ' + data) + '</div>' +
+      '<div class="linha-ass">____________________________________________________</div><div>' + escapar(assinatura(origem)) + '</div>' +
+      '<div class="linha-ass">____________________________________________________</div><div>' + escapar(assinatura(destino)) + '</div>' +
+      '<div>Destino - ' + escapar(nomeFilial(destino) || 'Filial ' + destino) + '</div>' +
+      '<div class="aprov">____________________________________________________</div><div>Aprovação</div></div></section>';
+  }
+  $('impressao').innerHTML = html;
+  $('termoInfo').className = 'info';
+  $('termoInfo').textContent = 'Na janela de impressão, escolha "Salvar como PDF" para guardar os termos.';
+  document.title = 'Termos de Transferencia ' + dados.conf.codigo;
+  window.print();
+  document.title = 'Painel · Conferência Patrimonial';
+});
+
+$('btnTermoCsv').addEventListener('click', () => {
+  const sep = ';';
+  const campo = v => { v = String(v == null ? '' : v); return /[;"\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; };
+  const linhas = [['Conferencia', 'Patrimonio', 'Codigo do Bem', 'Descricao', 'Filial Origem', 'Filial Destino', 'Data Aquisicao', 'Valor Base', 'Setor', 'Lido em']];
+  for (const [origem, itens] of gruposDeTransferencia()) {
+    for (const l of itens) {
+      const b = basePorNumero.get(l.patrimonio);
+      linhas.push([dados.conf.codigo, l.patrimonio, b && b.cb != null ? b.cb : '', l.descricao, origem, dados.conf.filial,
+        b ? dataExcel(b.dt) : '', b && typeof b.v === 'number' ? String(b.v).replace('.', ',') : '', l.setor, dataHora(l.ultima)]);
+    }
+  }
+  // o BOM no início faz o Excel abrir os acentos corretamente
+  baixarArquivo(new Blob(['﻿' + linhas.map(r => r.map(campo).join(sep)).join('\r\n') + '\r\n'], { type: 'text/csv;charset=utf-8' }),
+    'Transferencias_' + dados.conf.codigo + '.csv');
+});
+
 // ---------- Importação ----------
 $('arqConf').addEventListener('change', async ev => {
   const arquivos = Array.from(ev.target.files);
@@ -267,7 +434,7 @@ async function desenharConferencias() {
   for (const c of todas) {
     const li = document.createElement('li');
     if (c.codigo === selecionada) li.className = 'sel';
-    li.innerHTML = '<div class="txt"><div class="t1">' + escapar(c.codigo) + '</div><div class="t2">Filial ' + escapar(c.filial) +
+    li.innerHTML = '<div class="txt"><div class="t1">' + escapar(c.codigo) + '</div><div class="t2">Filial ' + escapar(c.filial) + (nomeFilial(c.filial) ? ', ' + escapar(nomeFilial(c.filial)) : '') +
       '</div></div><span class="estado' + (c.status === 'finalizada' ? ' fim">Finalizada' : '">Em aberto') + '</span>';
     li.addEventListener('click', () => abrir(c.codigo));
     ul.appendChild(li);
@@ -309,7 +476,7 @@ async function desenharGeral(todas) {
     const sit = l.c.status === 'finalizada' ? '<span class="estado fim">Finalizada no painel</span>' :
       l.lendoAgora ? '<span class="agora">Lendo agora</span>' :
       l.noCelular ? 'Finalizada no celular' : 'Em aberto';
-    html += '<tr data-codigo="' + escapar(l.c.codigo) + '"><td>' + escapar(l.c.codigo) + '</td><td class="n">' + escapar(l.c.filial) + '</td><td>' + sit +
+    html += '<tr data-codigo="' + escapar(l.c.codigo) + '"><td>' + escapar(l.c.codigo) + '</td><td class="n">' + escapar(l.c.filial) + (nomeFilial(l.c.filial) ? ' <small>' + escapar(nomeFilial(l.c.filial)) + '</small>' : '') + '</td><td>' + sit +
       '</td><td>' + escapar(l.c.usuarios.join(', ')) + '</td><td>' + (l.atividade ? dataHora(l.atividade).slice(0, 16) : '') +
       '</td><td class="n">' + l.lidos.toLocaleString('pt-BR') + '</td><td class="n">' + l.proprios.toLocaleString('pt-BR') +
       (l.total ? ' de ' + l.total.toLocaleString('pt-BR') + ' (' + pct(l.proprios, l.total) + ')' : '') +
@@ -482,13 +649,16 @@ async function abrir(codigo) {
   $('geral').hidden = true;
   $('detalhe').hidden = false;
   $('detTitulo').textContent = c.codigo;
-  $('detInfo').textContent = 'Filial ' + c.filial + '. ' +
+  $('detInfo').textContent = 'Filial ' + c.filial + (nomeFilial(c.filial) ? ' (' + nomeFilial(c.filial) + ')' : '') + '. ' +
     (c.status === 'finalizada' ? 'Finalizada no painel em ' + dataHora(c.fechadaEm).slice(0, 16) + '. ' : 'Em aberto no painel. ') +
     'Conferida por ' + (c.usuarios.join(', ') || 'usuário não informado') +
     (c.statusColetor ? '. No celular: ' + c.statusColetor.toLowerCase() : '') + '.';
   $('detAviso').hidden = dados.temBase;
   $('detAviso').textContent = 'A base de ativos não está carregada. Sem ela, "A localizar" fica vazio e as descrições vêm só do arquivo do celular.';
   $('btnStatus').textContent = c.status === 'finalizada' ? 'Reabrir conferência' : 'Marcar como finalizada';
+  $('btnTermos').textContent = 'Termos de transferência' + (dados.transferir.length ? ' (' + dados.transferir.length + ')' : '');
+  if (!$('termoBox').hidden && $('termoBox').dataset.codigo !== c.codigo) $('termoBox').hidden = true;
+  $('termoBox').dataset.codigo = c.codigo;
 
   const cartoes = [
     [dados.totalFilial, 'ativos da filial no sistema', ''],
@@ -584,6 +754,11 @@ $('btnExcluir').addEventListener('click', async () => {
   temSenha = !!(await kvLer('chaveBase'));
   tokenSalvo = (await kvLer('token')) || '';
   await carregarVivo();
+  filiais = new Map((await kvLer('filiais')) || []);
+  cargos = (await kvLer('cargos')) || [];
+  logoTermo = (await kvLer('logoTermo')) || '';
+  responsaveis = (await kvLer('responsaveis')) || {};
+  mostrarFiliais();
   mostrarBaseInfo();
   await desenharConferencias();
   buscarVivo();
